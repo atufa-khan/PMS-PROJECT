@@ -9,7 +9,8 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "debug:supabase": "node ./scripts/debug-supabase.mjs",
-    "debug:db": "node ./scripts/debug-db.mjs"
+    "debug:db": "node ./scripts/debug-db.mjs",
+    "notifications:process": "node ./scripts/process-notifications.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

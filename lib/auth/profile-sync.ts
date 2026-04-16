@@ -12,6 +12,11 @@ type SyncedProfile = {
   role: AppRole;
 };
 
+type ManagerCandidate = {
+  id: string;
+  team_id: string | null;
+};
+
 function deriveRequestedRole(user: User): AppRole {
   const metadataRole =
     typeof user.user_metadata?.role === "string" ? user.user_metadata.role : "";
@@ -23,11 +28,98 @@ function deriveRequestedRole(user: User): AppRole {
   return "employee";
 }
 
+function deriveRequestedManagerProfileId(user: User) {
+  return typeof user.user_metadata?.manager_profile_id === "string" &&
+    user.user_metadata.manager_profile_id.trim()
+    ? user.user_metadata.manager_profile_id.trim()
+    : null;
+}
+
+async function resolveManagerCandidate(
+  client: PoolClient,
+  {
+    profileId,
+    profileName,
+    requestedRole,
+    requestedManagerProfileId
+  }: {
+    profileId: string;
+    profileName: string;
+    requestedRole: AppRole;
+    requestedManagerProfileId: string | null;
+  }
+): Promise<ManagerCandidate | null> {
+  if (requestedRole !== "employee") {
+    return null;
+  }
+
+  if (requestedManagerProfileId) {
+    const requestedManager = await client.query<ManagerCandidate>(
+      `
+        select p.id, p.team_id
+        from public.profiles p
+        join public.user_roles ur on ur.profile_id = p.id
+        where p.id = $1
+          and ur.role = 'manager'
+          and p.is_active = true
+        limit 1
+      `,
+      [requestedManagerProfileId]
+    );
+
+    if (requestedManager.rows[0]) {
+      return requestedManager.rows[0];
+    }
+  }
+
+  const sameNameManagers = await client.query<ManagerCandidate>(
+    `
+      select p.id, p.team_id
+      from public.profiles p
+      join public.user_roles ur on ur.profile_id = p.id
+      where ur.role = 'manager'
+        and p.is_active = true
+        and p.id <> $1
+        and lower(trim(p.full_name)) = lower(trim($2))
+      order by ur.is_primary desc, p.created_at asc
+      limit 2
+    `,
+    [profileId, profileName]
+  );
+
+  if (sameNameManagers.rows.length === 1) {
+    return sameNameManagers.rows[0];
+  }
+
+  const allManagers = await client.query<ManagerCandidate>(
+    `
+      select p.id, p.team_id
+      from public.profiles p
+      join public.user_roles ur on ur.profile_id = p.id
+      where ur.role = 'manager'
+        and p.is_active = true
+      order by ur.is_primary desc, p.created_at asc
+      limit 2
+    `
+  );
+
+  if (allManagers.rows.length === 1) {
+    return allManagers.rows[0];
+  }
+
+  return null;
+}
+
 async function ensurePrimaryRole(
   client: PoolClient,
   profileId: string,
-  requestedRole: AppRole
+  requestedRole: AppRole,
+  allowRoleExpansion: boolean
 ) {
+  const requestedRoles: AppRole[] =
+    requestedRole === "manager"
+      ? ["manager", "employee"]
+      : [requestedRole];
   const existingRoles = await client.query<{ id: string; role: AppRole }>(
     `
       select id, role
@@ -38,19 +130,30 @@ async function ensurePrimaryRole(
     [profileId]
   );
 
-  const hasRequestedRole = existingRoles.rows.some(
-    (row) => row.role === requestedRole
-  );
+  const existingRoleSet = new Set(existingRoles.rows.map((row) => row.role));
 
-  if (!hasRequestedRole) {
+  for (const role of requestedRoles) {
+    const shouldGrant =
+      !existingRoleSet.has(role) &&
+      (allowRoleExpansion || role === "employee");
+
+    if (!shouldGrant) {
+      continue;
+    }
+
     await client.query(
       `
         insert into public.user_roles (id, profile_id, role, is_primary)
         values ($1, $2, $3, false)
       `,
-      [randomUUID(), profileId, requestedRole]
+      [randomUUID(), profileId, role]
     );
   }
+
+  const primaryRole =
+    existingRoleSet.has(requestedRole) || allowRoleExpansion
+      ? requestedRole
+      : existingRoles.rows[0]?.role ?? "employee";
 
   await client.query(
     `
@@ -58,7 +161,7 @@ async function ensurePrimaryRole(
       set is_primary = role = $2
       where profile_id = $1
     `,
-    [profileId, requestedRole]
+    [profileId, primaryRole]
   );
 }
 
@@ -96,6 +199,87 @@ async function ensureEmploymentRecord(
   );
 }
 
+async function assignManagerIfMissing(
+  client: PoolClient,
+  {
+    profileId,
+    profileName,
+    requestedRole,
+    requestedManagerProfileId
+  }: {
+    profileId: string;
+    profileName: string;
+    requestedRole: AppRole;
+    requestedManagerProfileId: string | null;
+  }
+) {
+  const recordResult = await client.query<{ manager_profile_id: string | null }>(
+    `
+      select manager_profile_id
+      from public.employee_records
+      where profile_id = $1
+      limit 1
+    `,
+    [profileId]
+  );
+
+  if (recordResult.rows[0]?.manager_profile_id) {
+    return;
+  }
+
+  const managerCandidate = await resolveManagerCandidate(client, {
+    profileId,
+    profileName,
+    requestedRole,
+    requestedManagerProfileId
+  });
+
+  if (!managerCandidate) {
+    return;
+  }
+
+  await client.query(
+    `
+      update public.employee_records
+      set manager_profile_id = $2,
+          updated_at = timezone('utc', now())
+      where profile_id = $1
+    `,
+    [profileId, managerCandidate.id]
+  );
+
+  await client.query(
+    `
+      insert into public.manager_assignments (
+        id,
+        employee_profile_id,
+        manager_profile_id,
+        starts_on,
+        reason
+      )
+      select $1, $2, $3, current_date, 'Assigned during account sync'
+      where not exists (
+        select 1
+        from public.manager_assignments
+        where employee_profile_id = $2
+          and manager_profile_id = $3
+          and ends_on is null
+      )
+    `,
+    [randomUUID(), profileId, managerCandidate.id]
+  );
+
+  await client.query(
+    `
+      update public.profiles
+      set team_id = coalesce(team_id, $2),
+          updated_at = timezone('utc', now())
+      where id = $1
+    `,
+    [profileId, managerCandidate.team_id]
+  );
+}
+
 function deriveFullName(user: User) {
   const metadataName =
     typeof user.user_metadata?.full_name === "string"
@@ -122,6 +306,7 @@ export async function syncProfileForAuthUser(
 ): Promise<SyncedProfile> {
   const email = user.email?.trim().toLowerCase();
   const requestedRole = deriveRequestedRole(user);
+  const requestedManagerProfileId = deriveRequestedManagerProfileId(user);
 
   if (!email) {
     throw new Error("Authenticated user is missing an email address.");
@@ -136,14 +321,14 @@ export async function syncProfileForAuthUser(
     `
       select id, full_name, email, auth_user_id
       from public.profiles
-      where auth_user_id = $1 or lower(email) = $2
-      order by case when auth_user_id = $1 then 0 else 1 end
+      where auth_user_id = $1
       limit 1
     `,
-    [user.id, email]
+    [user.id]
   );
 
   let profile = existingProfileResult.rows[0];
+  let createdProfile = false;
 
   if (!profile) {
     const id = randomUUID();
@@ -166,7 +351,7 @@ export async function syncProfileForAuthUser(
       [randomUUID(), id, requestedRole]
     );
 
-    await ensureEmploymentRecord(client, id);
+    createdProfile = true;
 
     profile = {
       id,
@@ -174,19 +359,33 @@ export async function syncProfileForAuthUser(
       email,
       auth_user_id: user.id
     };
-  } else if (profile.auth_user_id !== user.id) {
+  } else {
     await client.query(
       `
         update public.profiles
-        set auth_user_id = $1, updated_at = timezone('utc', now())
-        where id = $2
+        set full_name = $1,
+            email = $2,
+            updated_at = timezone('utc', now())
+        where id = $3
       `,
-      [user.id, profile.id]
+      [deriveFullName(user), email, profile.id]
     );
+
+    profile = {
+      ...profile,
+      full_name: deriveFullName(user),
+      email
+    };
   }
 
-  await ensurePrimaryRole(client, profile.id, requestedRole);
+  await ensurePrimaryRole(client, profile.id, requestedRole, createdProfile);
   await ensureEmploymentRecord(client, profile.id);
+  await assignManagerIfMissing(client, {
+    profileId: profile.id,
+    profileName: profile.full_name,
+    requestedRole,
+    requestedManagerProfileId
+  });
 
   const roleResult = await client.query<{
     role: AppRole;

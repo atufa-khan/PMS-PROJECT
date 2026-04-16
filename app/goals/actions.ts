@@ -2,27 +2,38 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
+import type { Route } from "next";
 import { z } from "zod";
 import { getAppSession } from "@/lib/auth/session";
 import { withDbTransaction } from "@/lib/db/server";
-
-type GoalAccessRow = {
-  id: string;
-  owner_profile_id: string | null;
-  scope: "company" | "team" | "individual";
-  status: "draft" | "pending_approval" | "active" | "completed" | "archived";
-  title: string;
-  weightage: number | string;
-  created_by: string | null;
-};
+import {
+  ensureGoalWeightageBalanced,
+  inferGoalParentId,
+  normalizeGoalStatus,
+  queueGoalDecisionNotification,
+  queueGoalSubmissionNotifications,
+  recalculateGoalHierarchy,
+  type GoalWorkflowRow
+} from "@/lib/workflows/goal-helpers";
+import { recordAudit } from "@/lib/workflows/workflow-helpers";
 
 const goalIdSchema = z.object({
   goalId: z.string().uuid()
 });
 
+const submitGoalSchema = goalIdSchema.extend({
+  returnTo: z.string().optional()
+});
+
 const progressSchema = z.object({
   goalId: z.string().uuid(),
   completionPct: z.coerce.number().min(0).max(100)
+});
+
+const approveSchema = z.object({
+  goalId: z.string().uuid(),
+  weightage: z.coerce.number().min(0).max(100)
 });
 
 const rejectSchema = z.object({
@@ -34,9 +45,20 @@ async function loadGoalForActor(goalId: string) {
   const session = await getAppSession();
 
   const result = await withDbTransaction(async (client) => {
-    const goalResult = await client.query<GoalAccessRow>(
+    const goalResult = await client.query<GoalWorkflowRow>(
       `
-        select id, owner_profile_id, scope, status, title, weightage, created_by
+        select
+          id,
+          parent_goal_id,
+          owner_profile_id,
+          team_id,
+          cycle_id,
+          scope,
+          status,
+          title,
+          weightage,
+          completion_pct,
+          created_by
         from public.goals
         where id = $1
         limit 1
@@ -53,21 +75,18 @@ async function loadGoalForActor(goalId: string) {
   return result;
 }
 
-async function logAudit(
-  client: import("pg").PoolClient,
-  actorId: string,
-  entityType: string,
-  entityId: string,
-  action: string,
-  metadata: Record<string, unknown> = {}
+function buildGoalRedirectTarget(
+  returnTo: string | undefined,
+  fallbackPath: string,
+  status: "success" | "error",
+  message: string
 ) {
-  await client.query(
-    `
-      insert into public.audit_logs (id, actor_profile_id, entity_type, entity_id, action, metadata)
-      values ($1, $2, $3, $4, $5, $6::jsonb)
-    `,
-    [randomUUID(), actorId, entityType, entityId, action, JSON.stringify(metadata)]
-  );
+  const safeBase =
+    typeof returnTo === "string" && returnTo.startsWith("/") ? returnTo : fallbackPath;
+  const url = new URL(safeBase, "http://localhost");
+  url.searchParams.set("goalStatus", status);
+  url.searchParams.set("goalMessage", message);
+  return `${url.pathname}${url.search}`;
 }
 
 function canManagerAct(sessionUserId: string, ownerProfileId: string | null) {
@@ -93,47 +112,204 @@ function canManagerAct(sessionUserId: string, ownerProfileId: string | null) {
 }
 
 export async function submitGoalForApprovalAction(formData: FormData) {
+  const parsed = submitGoalSchema.safeParse({
+    goalId: formData.get("goalId"),
+    returnTo: formData.get("returnTo") || undefined
+  });
+
+  if (!parsed.success) {
+    redirect(
+      buildGoalRedirectTarget(
+        typeof formData.get("returnTo") === "string"
+          ? String(formData.get("returnTo"))
+          : undefined,
+        "/goals",
+        "error",
+        "We could not submit that goal. Please refresh and try again."
+      ) as Route
+    );
+  }
+
+  const { session, goal } = await loadGoalForActor(parsed.data.goalId);
+
+  if (!goal || goal.owner_profile_id !== session.userId || goal.status !== "draft") {
+    redirect(
+      buildGoalRedirectTarget(
+        parsed.data.returnTo,
+        "/goals",
+        "error",
+        "Only your own draft goals can be submitted for approval."
+      ) as Route
+    );
+  }
+
+  try {
+    await withDbTransaction(async (client) => {
+      const currentGoalResult = await client.query<{
+        id: string;
+        owner_profile_id: string | null;
+        status: GoalWorkflowRow["status"];
+      }>(
+        `
+          select id, owner_profile_id, status
+          from public.goals
+          where id = $1
+          limit 1
+        `,
+        [goal.id]
+      );
+
+      const currentGoal = currentGoalResult.rows[0];
+
+      if (
+        !currentGoal ||
+        currentGoal.owner_profile_id !== session.userId ||
+        currentGoal.status !== "draft"
+      ) {
+        throw new Error("This goal is no longer a draft you can submit.");
+      }
+
+      const priorSubmitResult = await client.query<{ has_prior_submit: boolean }>(
+        `
+          select exists (
+            select 1
+            from public.goal_approval_events
+            where goal_id = $1
+              and event_type in ('submit', 'resubmit', 'reject')
+          ) as has_prior_submit
+        `,
+        [goal.id]
+      );
+
+      const submissionEventType = priorSubmitResult.rows[0]?.has_prior_submit
+        ? "resubmit"
+        : "submit";
+
+      await client.query(
+        `
+          update public.goals
+          set status = 'pending_approval',
+              updated_at = timezone('utc', now())
+          where id = $1
+        `,
+        [goal.id]
+      );
+
+      await client.query(
+        `
+          insert into public.goal_approval_events (id, goal_id, actor_profile_id, event_type, reason, metadata)
+          values ($1, $2, $3, $4, $5, $6::jsonb)
+        `,
+        [
+          randomUUID(),
+          goal.id,
+          session.userId,
+          submissionEventType,
+          submissionEventType === "resubmit"
+            ? "Goal resubmitted for approval"
+            : "Goal submitted for approval",
+          JSON.stringify({ submitted_from: "goals_page" })
+        ]
+      );
+
+      await queueGoalSubmissionNotifications(client, goal);
+
+      await recordAudit(client, session.userId, "goal", goal.id, "goal_submitted", {
+        title: goal.title
+      });
+    });
+  } catch (error) {
+    redirect(
+      buildGoalRedirectTarget(
+        parsed.data.returnTo,
+        "/goals",
+        "error",
+        error instanceof Error ? error.message : "Unable to submit the goal for approval."
+      ) as Route
+    );
+  }
+
+  revalidatePath("/goals");
+  revalidatePath("/goals/approvals");
+  revalidatePath("/dashboard");
+
+  redirect(
+    buildGoalRedirectTarget(
+      parsed.data.returnTo,
+      "/goals",
+      "success",
+      "Goal submitted for approval. Your manager can review it now."
+    ) as Route
+  );
+}
+
+export async function acknowledgeGoalSuggestionAction(formData: FormData) {
   const parsed = goalIdSchema.parse({
     goalId: formData.get("goalId")
   });
 
   const { session, goal } = await loadGoalForActor(parsed.goalId);
 
-  if (!goal || goal.owner_profile_id !== session.userId || goal.status !== "draft") {
+  if (!goal || goal.owner_profile_id !== session.userId) {
     return;
   }
 
   await withDbTransaction(async (client) => {
-    await client.query(
+    const latestSuggestion = await client.query<{
+      latest_suggestion_at: string | null;
+      latest_ack_at: string | null;
+    }>(
       `
-        update public.goals
-        set status = 'pending_approval',
-            updated_at = timezone('utc', now())
-        where id = $1
+        select
+          (
+            select created_at::text
+            from public.goal_approval_events
+            where goal_id = $1
+              and event_type = 'company_goal_suggested'
+            order by created_at desc
+            limit 1
+          ) as latest_suggestion_at,
+          (
+            select created_at::text
+            from public.goal_approval_events
+            where goal_id = $1
+              and event_type = 'company_goal_acknowledged'
+            order by created_at desc
+            limit 1
+          ) as latest_ack_at
       `,
       [goal.id]
     );
 
+    const suggestionAt = latestSuggestion.rows[0]?.latest_suggestion_at;
+    const ackAt = latestSuggestion.rows[0]?.latest_ack_at;
+
+    if (
+      !suggestionAt ||
+      (ackAt && new Date(ackAt).getTime() >= new Date(suggestionAt).getTime())
+    ) {
+      return;
+    }
+
     await client.query(
       `
         insert into public.goal_approval_events (id, goal_id, actor_profile_id, event_type, reason, metadata)
-        values ($1, $2, $3, 'submit', 'Goal submitted for approval', $4::jsonb)
+        values ($1, $2, $3, 'company_goal_acknowledged', 'Company goal change acknowledged', $4::jsonb)
       `,
       [
         randomUUID(),
         goal.id,
         session.userId,
-        JSON.stringify({ submitted_from: "goals_page" })
+        JSON.stringify({ acknowledgedAt: new Date().toISOString() })
       ]
     );
 
-    await logAudit(client, session.userId, "goal", goal.id, "goal_submitted", {
+    await recordAudit(client, session.userId, "goal", goal.id, "company_goal_acknowledged", {
       title: goal.title
     });
   });
 
   revalidatePath("/goals");
-  revalidatePath("/goals/approvals");
   revalidatePath("/dashboard");
 }
 
@@ -155,21 +331,13 @@ export async function updateGoalProgressAction(formData: FormData) {
         ? await canManagerAct(session.userId, goal.owner_profile_id)(client)
         : false;
 
-    const allowed =
-      session.role === "admin" ||
-      goal.owner_profile_id === session.userId ||
-      managerAllowed;
+    const allowed = goal.owner_profile_id === session.userId || managerAllowed;
 
     if (!allowed) {
       return;
     }
 
-    const nextStatus =
-      parsed.completionPct >= 100 && goal.status !== "archived"
-        ? "completed"
-        : goal.status === "completed" && parsed.completionPct < 100
-          ? "active"
-          : goal.status;
+    const nextStatus = normalizeGoalStatus(goal.status, parsed.completionPct);
 
     await client.query(
       `
@@ -196,9 +364,11 @@ export async function updateGoalProgressAction(formData: FormData) {
       ]
     );
 
-    await logAudit(client, session.userId, "goal", goal.id, "goal_progress_updated", {
+    await recordAudit(client, session.userId, "goal", goal.id, "goal_progress_updated", {
       completionPct: parsed.completionPct
     });
+
+    await recalculateGoalHierarchy(client, goal.id);
   });
 
   revalidatePath("/goals");
@@ -221,8 +391,9 @@ export async function archiveGoalAction(formData: FormData) {
       session.role === "manager"
         ? await canManagerAct(session.userId, goal.owner_profile_id)(client)
         : false;
-
-    const allowed = session.role === "admin" || managerAllowed;
+    const managerOwnGoal =
+      session.role === "manager" && goal.owner_profile_id === session.userId;
+    const allowed = session.role === "admin" || managerAllowed || managerOwnGoal;
 
     if (!allowed) {
       return;
@@ -247,9 +418,11 @@ export async function archiveGoalAction(formData: FormData) {
       [randomUUID(), goal.id, session.userId, JSON.stringify({ archived: true })]
     );
 
-    await logAudit(client, session.userId, "goal", goal.id, "goal_archived", {
+    await recordAudit(client, session.userId, "goal", goal.id, "goal_archived", {
       title: goal.title
     });
+
+    await recalculateGoalHierarchy(client, goal.id);
   });
 
   revalidatePath("/goals");
@@ -257,8 +430,9 @@ export async function archiveGoalAction(formData: FormData) {
 }
 
 export async function approveGoalAction(formData: FormData) {
-  const parsed = goalIdSchema.parse({
-    goalId: formData.get("goalId")
+  const parsed = approveSchema.parse({
+    goalId: formData.get("goalId"),
+    weightage: formData.get("weightage")
   });
 
   const { session, goal } = await loadGoalForActor(parsed.goalId);
@@ -279,16 +453,27 @@ export async function approveGoalAction(formData: FormData) {
       return;
     }
 
+    await ensureGoalWeightageBalanced(client, goal, parsed.weightage);
+    const parentGoalId =
+      goal.parent_goal_id ??
+      (await inferGoalParentId(client, {
+        scope: goal.scope,
+        cycleId: goal.cycle_id,
+        teamId: goal.team_id
+      }));
+
     await client.query(
       `
         update public.goals
         set status = 'active',
+            parent_goal_id = coalesce(parent_goal_id, $3),
+            weightage = $4,
             approved_by = $2,
             approved_at = timezone('utc', now()),
             updated_at = timezone('utc', now())
         where id = $1
       `,
-      [goal.id, session.userId]
+      [goal.id, session.userId, parentGoalId, parsed.weightage]
     );
 
     await client.query(
@@ -296,12 +481,22 @@ export async function approveGoalAction(formData: FormData) {
         insert into public.goal_approval_events (id, goal_id, actor_profile_id, event_type, reason, metadata)
         values ($1, $2, $3, 'approve', 'Goal approved', $4::jsonb)
       `,
-      [randomUUID(), goal.id, session.userId, JSON.stringify({ approved: true })]
+      [
+        randomUUID(),
+        goal.id,
+        session.userId,
+        JSON.stringify({ approved: true, weightage: parsed.weightage })
+      ]
     );
 
-    await logAudit(client, session.userId, "goal", goal.id, "goal_approved", {
-      title: goal.title
+    await queueGoalDecisionNotification(client, {
+      goal,
+      decision: "approved",
+      actorProfileId: session.userId,
+      weightage: parsed.weightage
     });
+
+    await recalculateGoalHierarchy(client, goal.id);
   });
 
   revalidatePath("/goals");
@@ -357,7 +552,10 @@ export async function rejectGoalAction(formData: FormData) {
       ]
     );
 
-    await logAudit(client, session.userId, "goal", goal.id, "goal_rejected", {
+    await queueGoalDecisionNotification(client, {
+      goal,
+      decision: "rejected",
+      actorProfileId: session.userId,
       reason: parsed.reason
     });
   });

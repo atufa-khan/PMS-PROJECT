@@ -2,20 +2,42 @@ import { AppShell } from "@/components/app-shell";
 import { SectionCard } from "@/components/section-card";
 import { approveGoalAction, rejectGoalAction } from "@/app/goals/actions";
 import { getAppSession } from "@/lib/auth/session";
+import {
+  buildWorkspaceToggleOptions,
+  resolveWorkspaceSession
+} from "@/lib/auth/workspace-role";
 import { listPendingApprovals } from "@/lib/workflows/goal-service";
 
-export default async function GoalApprovalsPage() {
+export default async function GoalApprovalsPage({
+  searchParams
+}: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const session = await getAppSession();
-  const approvals = await listPendingApprovals(session);
+  const resolvedSearchParams = (await searchParams) ?? {};
+  const workspaceSession = resolveWorkspaceSession(
+    session,
+    typeof resolvedSearchParams.view === "string"
+      ? resolvedSearchParams.view
+      : undefined
+  );
+  const approvals = await listPendingApprovals(workspaceSession);
+  const workspaceToggle = buildWorkspaceToggleOptions(
+    session,
+    workspaceSession.role,
+    "/goals/approvals",
+    resolvedSearchParams
+  );
 
   return (
     <AppShell
-      role={session.role}
+      role={workspaceSession.role}
       title="Goal approvals"
-      subtitle="Approval, rejection, SLA visibility, and escalation timing are all first-class workflow states in this build."
+      subtitle="Approval, rejection, SLA visibility, weightage confirmation, and escalation timing are all first-class workflow states in this build."
       userName={session.fullName}
       userEmail={session.email}
       isDemo={session.isDemo}
+      workspaceToggle={workspaceToggle}
     >
       <SectionCard title="Pending requests">
         <div className="space-y-3">
@@ -31,18 +53,33 @@ export default async function GoalApprovalsPage() {
                     {approval.scope} goal • {approval.weightage}% weightage
                   </p>
                 </div>
-                <p className="text-sm text-accentWarm">{approval.status}</p>
+                <div className="text-right">
+                  <p className="text-sm text-accentWarm">{approval.status}</p>
+                  <p className="mt-2 text-xs text-muted">
+                    Assigned: {approval.assignedTotal}% | remaining: {approval.remaining}%
+                  </p>
+                </div>
               </div>
 
               {approval.canApprove ? (
                 <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-center">
-                  <form action={approveGoalAction}>
+                  <form action={approveGoalAction} className="flex items-center gap-2">
                     <input type="hidden" name="goalId" value={approval.goalId} />
+                    <input
+                      name="weightage"
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.01"
+                      defaultValue={approval.weightage}
+                      className="w-28 rounded-full border border-border bg-white px-4 py-2 text-sm"
+                      required
+                    />
                     <button
                       type="submit"
                       className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-white"
                     >
-                      Approve
+                      Approve + set weightage
                     </button>
                   </form>
 

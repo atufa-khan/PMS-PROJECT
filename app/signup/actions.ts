@@ -13,6 +13,7 @@ const signUpSchema = z
     fullName: z.string().min(2),
     email: z.string().email(),
     role: z.enum(APP_ROLES),
+    managerProfileId: z.string().uuid().optional(),
     password: z.string().min(8),
     confirmPassword: z.string().min(8)
   })
@@ -34,6 +35,7 @@ export async function signUpAction(
     fullName: formData.get("fullName"),
     email: formData.get("email"),
     role: formData.get("role"),
+    managerProfileId: formData.get("managerProfileId") || undefined,
     password: formData.get("password"),
     confirmPassword: formData.get("confirmPassword")
   });
@@ -63,7 +65,9 @@ export async function signUpAction(
       emailRedirectTo: `${env.APP_URL}/login`,
       data: {
         full_name: parsed.data.fullName,
-        role: parsed.data.role
+        role: parsed.data.role,
+        manager_profile_id:
+          parsed.data.role === "employee" ? parsed.data.managerProfileId ?? null : null
       }
     }
   });

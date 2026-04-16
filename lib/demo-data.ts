@@ -11,18 +11,21 @@ const sessions: AppSession[] = [
     userId: "8f57ae3e-ff14-4c64-bf9f-1cc2576d7cb3",
     fullName: "Aarav Shah",
     role: "admin",
+    roles: ["admin"],
     email: "aarav.shah@pms.local"
   },
   {
     userId: "7f83686a-3a66-4876-b564-10d7cdd74c11",
     fullName: "Neha Rao",
     role: "manager",
+    roles: ["manager", "employee"],
     email: "neha.rao@pms.local"
   },
   {
     userId: "6f3c1130-93f3-47ff-8664-6474ac48a637",
     fullName: "Ishita Gupta",
     role: "employee",
+    roles: ["employee"],
     email: "ishita.gupta@pms.local"
   }
 ];
@@ -68,7 +71,10 @@ export function getGoals(): GoalRecord[] {
       ownerName: "Aarav Shah",
       dueLabel: "Aug 25",
       weightage: 20,
-      completionPct: 55
+      completionPct: 55,
+      rating: "Below Expectations",
+      portfolioWeightage: 100,
+      portfolioRemaining: 0
     },
     {
       id: "9df4dbdf-f63e-4207-b7c9-d0e309892f63",
@@ -78,7 +84,10 @@ export function getGoals(): GoalRecord[] {
       ownerName: "Neha Rao",
       dueLabel: "Aug 25",
       weightage: 30,
-      completionPct: 72
+      completionPct: 72,
+      rating: "Meets Expectations",
+      portfolioWeightage: 100,
+      portfolioRemaining: 0
     },
     {
       id: "3ce506cf-7572-44b4-bb2d-dfd3aa841478",
@@ -88,7 +97,10 @@ export function getGoals(): GoalRecord[] {
       ownerName: "Ishita Gupta",
       dueLabel: "Sep 10",
       weightage: 25,
-      completionPct: 10
+      completionPct: 10,
+      rating: "Below Expectations",
+      portfolioWeightage: 100,
+      portfolioRemaining: 0
     },
     {
       id: "c36a0ccb-09f9-4bb6-b92e-8e72893e0f63",
@@ -98,7 +110,10 @@ export function getGoals(): GoalRecord[] {
       ownerName: "Ishita Gupta",
       dueLabel: "Aug 25",
       weightage: 25,
-      completionPct: 93
+      completionPct: 93,
+      rating: "Meets Expectations",
+      portfolioWeightage: 100,
+      portfolioRemaining: 0
     }
   ];
 }

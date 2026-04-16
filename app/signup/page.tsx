@@ -1,7 +1,23 @@
 import Link from "next/link";
 import { SignUpForm } from "@/app/signup/signup-form";
+import { dbQuery } from "@/lib/db/server";
 
-export default function SignUpPage() {
+export default async function SignUpPage() {
+  const managers = await dbQuery<{
+    id: string;
+    full_name: string;
+    email: string;
+  }>(
+    `
+      select p.id, p.full_name, p.email
+      from public.profiles p
+      join public.user_roles ur on ur.profile_id = p.id
+      where ur.role = 'manager'
+        and p.is_active = true
+      order by ur.is_primary desc, p.full_name asc
+    `
+  ).catch(() => ({ rows: [] }));
+
   return (
     <main className="mx-auto flex min-h-screen max-w-md items-center px-6 py-20">
       <div className="w-full rounded-xl2 border border-border/80 bg-white/90 p-8 shadow-card">
@@ -13,7 +29,13 @@ export default function SignUpPage() {
           Create a new employee account in Supabase Auth. The app will create or
           sync your PMS profile on first successful auth.
         </p>
-        <SignUpForm />
+        <SignUpForm
+          managerOptions={managers.rows.map((manager) => ({
+            id: manager.id,
+            fullName: manager.full_name,
+            email: manager.email
+          }))}
+        />
         <div className="mt-6 text-center text-sm text-muted">
           <Link href="/" className="underline underline-offset-4">
             Back to home
