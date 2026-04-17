@@ -29,14 +29,18 @@ function getSmtpTransport() {
   return nodemailer.createTransport({
     host: smtp.host,
     port: smtp.port ?? 0,
-    secure: false,
+    secure: smtp.secure,
+    requireTLS: smtp.requireTls,
     auth:
-      smtp.userConfigured || smtp.passwordConfigured
+      smtp.authConfigured
         ? {
             user: process.env.SMTP_USER || undefined,
             pass: process.env.SMTP_PASS || undefined
           }
-        : undefined
+        : undefined,
+    tls: {
+      rejectUnauthorized: smtp.tlsRejectUnauthorized
+    }
   });
 }
 
@@ -880,4 +884,64 @@ export async function sendSmtpTestEmail({
   } finally {
     client.release();
   }
+}
+
+export async function verifySmtpConnection({
+  actorProfileId
+}: {
+  actorProfileId: string | null;
+}) {
+  const transport = getSmtpTransport();
+  const smtp = getSmtpSummary();
+
+  if (!transport) {
+    throw new Error(
+      smtp.authPartiallyConfigured
+        ? "SMTP auth is incomplete. Set both SMTP_USER and SMTP_PASS, or clear both for a non-authenticated server."
+        : "SMTP is not configured."
+    );
+  }
+
+  await transport.verify();
+
+  const pool = getDbPool();
+
+  if (!pool) {
+    return {
+      host: smtp.host,
+      port: smtp.port,
+      secure: smtp.secure,
+      requireTls: smtp.requireTls,
+      authConfigured: smtp.authConfigured
+    };
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await recordAudit(
+      client,
+      actorProfileId,
+      "notification_ops",
+      null,
+      "smtp_connection_verified",
+      {
+        host: smtp.host,
+        port: smtp.port,
+        secure: smtp.secure,
+        requireTls: smtp.requireTls,
+        authConfigured: smtp.authConfigured
+      }
+    );
+  } finally {
+    client.release();
+  }
+
+  return {
+    host: smtp.host,
+    port: smtp.port,
+    secure: smtp.secure,
+    requireTls: smtp.requireTls,
+    authConfigured: smtp.authConfigured
+  };
 }

@@ -5,7 +5,8 @@ import { SectionCard } from "@/components/section-card";
 import {
   retryFailedNotificationsAction,
   runNotificationOpsAction,
-  sendSmtpTestAction
+  sendSmtpTestAction,
+  verifySmtpConnectionAction
 } from "@/app/admin/notifications/actions";
 import { requireRole } from "@/lib/auth/permissions";
 import { getAppSession } from "@/lib/auth/session";
@@ -89,6 +90,20 @@ export default async function AdminNotificationsPage({
                 {overview.smtp.port ?? "n/a"}
               </p>
               <p className="mt-2 text-sm text-muted">
+                Auth:{" "}
+                {overview.smtp.authPartiallyConfigured
+                  ? "Incomplete"
+                  : overview.smtp.authConfigured
+                    ? "Configured"
+                    : "Not required"}
+                {" | "}Transport:{" "}
+                {overview.smtp.secure
+                  ? "Implicit TLS"
+                  : overview.smtp.requireTls
+                    ? "STARTTLS"
+                    : "Plain SMTP"}
+              </p>
+              <p className="mt-2 text-sm text-muted">
                 Sender: {overview.smtp.fromName} &lt;{overview.smtp.fromEmail}&gt;
               </p>
             </div>
@@ -141,6 +156,16 @@ export default async function AdminNotificationsPage({
                 className="rounded-full border border-border bg-white px-5 py-3 text-sm text-stone-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 Send SMTP test to me
+              </button>
+            </form>
+
+            <form action={verifySmtpConnectionAction}>
+              <button
+                type="submit"
+                disabled={!overview.smtp.configured}
+                className="rounded-full border border-border bg-white px-5 py-3 text-sm text-stone-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Verify SMTP connection
               </button>
             </form>
 

@@ -43,19 +43,32 @@ export function SignUpForm({
           required
         />
       </label>
-      <label className="block">
-        <span className="mb-2 block text-sm text-stone-700">Role</span>
-        <select
-          name="role"
-          defaultValue="employee"
-          onChange={(event) => setRole(event.target.value)}
-          className="w-full rounded-2xl border border-border bg-stone-50 px-4 py-3 outline-none"
-        >
-          <option value="employee">Employee</option>
-          {allowElevatedRoles ? <option value="manager">Manager</option> : null}
-          {allowElevatedRoles ? <option value="admin">Admin (HR)</option> : null}
-        </select>
-      </label>
+      {allowElevatedRoles ? (
+        <label className="block">
+          <span className="mb-2 block text-sm text-stone-700">Role</span>
+          <select
+            name="role"
+            defaultValue="employee"
+            onChange={(event) => setRole(event.target.value)}
+            className="w-full rounded-2xl border border-border bg-stone-50 px-4 py-3 outline-none"
+          >
+            <option value="employee">Employee</option>
+            <option value="manager">Manager</option>
+            <option value="admin">Admin (HR)</option>
+          </select>
+        </label>
+      ) : (
+        <>
+          <input type="hidden" name="role" value="employee" />
+          <div className="rounded-2xl border border-border bg-stone-50 p-4">
+            <span className="mb-2 block text-sm text-stone-700">Account type</span>
+            <p className="text-sm text-muted">
+              Public signup is limited to employee accounts in this environment.
+              Manager and Admin access must be provisioned from Admin Users.
+            </p>
+          </div>
+        </>
+      )}
       {role === "employee" ? (
         <label className="block">
           <span className="mb-2 block text-sm text-stone-700">Reporting manager</span>
@@ -104,7 +117,7 @@ export function SignUpForm({
       <p className="text-center text-sm text-muted">
         {!allowElevatedRoles ? (
           <span className="mb-3 block">
-            Elevated roles are currently provisioned by Admin only.
+            Elevated roles are invite-only in this environment.
           </span>
         ) : null}
         Already have an account?{" "}

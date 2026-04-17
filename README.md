@@ -34,7 +34,7 @@ The current implementation covers the main PMS workflow foundation and is now fo
 
 - The SQL schema is designed for Supabase Postgres with RLS and `gen_random_uuid()`.
 - Local development can run entirely on pooled Postgres connectivity if direct DB host resolution is unavailable on the machine.
-- Elevated self-signup can be disabled with `ALLOW_ELEVATED_SELF_SIGNUP=false`.
+- Production should keep `ALLOW_ELEVATED_SELF_SIGNUP=false` so manager and Admin access remain invite-only.
 
 ## Next steps
 

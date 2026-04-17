@@ -6,7 +6,8 @@ import { getAppSession } from "@/lib/auth/session";
 import { dbQuery } from "@/lib/db/server";
 import {
   runNotificationProcessor,
-  sendSmtpTestEmail
+  sendSmtpTestEmail,
+  verifySmtpConnection
 } from "@/lib/workflows/notification-runtime";
 
 function redirectWithStatus(status: "success" | "error", message: string): never {
@@ -63,6 +64,31 @@ export async function sendSmtpTestAction() {
     redirectWithStatus(
       "error",
       error instanceof Error ? error.message : "Unable to send the SMTP test email."
+    );
+  }
+}
+
+export async function verifySmtpConnectionAction() {
+  const session = await getAppSession();
+
+  if (session.role !== "admin") {
+    redirect("/dashboard");
+  }
+
+  try {
+    const result = await verifySmtpConnection({
+      actorProfileId: session.userId
+    });
+
+    revalidatePath("/admin/notifications");
+    redirectWithStatus(
+      "success",
+      `SMTP connection verified on ${result.host}:${result.port ?? "n/a"} using ${result.secure ? "implicit TLS" : result.requireTls ? "STARTTLS" : "plain SMTP"}${result.authConfigured ? " with authentication" : ""}.`
+    );
+  } catch (error) {
+    redirectWithStatus(
+      "error",
+      error instanceof Error ? error.message : "Unable to verify the SMTP connection."
     );
   }
 }

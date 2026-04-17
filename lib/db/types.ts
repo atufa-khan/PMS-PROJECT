@@ -263,6 +263,11 @@ export type NotificationOperationsOverview = {
     port: number | null;
     userConfigured: boolean;
     passwordConfigured: boolean;
+    authConfigured: boolean;
+    authPartiallyConfigured: boolean;
+    secure: boolean;
+    requireTls: boolean;
+    tlsRejectUnauthorized: boolean;
     fromEmail: string;
     fromName: string;
   };
@@ -279,10 +284,46 @@ export type UatScenarioRecord = {
   liveEvidence: string;
   href?: string;
   steps: string[];
+  recommendedEmail?: string;
+  execution?: UatExecutionRecord | null;
 };
 
 export type UatOverview = {
   metrics: DashboardMetric[];
   scenarios: UatScenarioRecord[];
+  fixtureAccounts: UatFixtureAccountRecord[];
+  seededScenarios: UatSeededScenarioRecord[];
   rolloutNotes: string[];
+};
+
+export type UatFixtureAccountRecord = {
+  key: string;
+  title: string;
+  email: string;
+  roles: string[];
+  temporaryPassword: string;
+  status: "ready" | "attention" | "blocked";
+  authLinked: boolean;
+  description: string;
+  notes: string[];
+};
+
+export type UatSeededScenarioRecord = {
+  key: string;
+  title: string;
+  status: "ready" | "attention" | "blocked";
+  description: string;
+  ownerEmail: string;
+  linkedRoute?: string;
+  evidence: string;
+  execution?: UatExecutionRecord | null;
+};
+
+export type UatExecutionRecord = {
+  scenarioKey: string;
+  outcome: "passed" | "follow_up" | "blocked";
+  actorName: string;
+  testedAt: string;
+  note?: string | null;
+  testedAccountEmail?: string | null;
 };

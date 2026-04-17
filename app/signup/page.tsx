@@ -19,6 +19,8 @@ export default async function SignUpPage() {
     `
   ).catch(() => ({ rows: [] }));
 
+  const allowElevatedRoles = env.ALLOW_ELEVATED_SELF_SIGNUP;
+
   return (
     <main className="mx-auto flex min-h-screen max-w-md items-center px-6 py-20">
       <div className="w-full rounded-xl2 border border-border/80 bg-white/90 p-8 shadow-card">
@@ -27,11 +29,12 @@ export default async function SignUpPage() {
         </p>
         <h1 className="mt-3 text-3xl font-semibold">Start using PMS</h1>
         <p className="mt-2 text-sm leading-6 text-muted">
-          Create a new employee account in Supabase Auth. The app will create or
-          sync your PMS profile on first successful auth.
+          {allowElevatedRoles
+            ? "Create a new PMS account in Supabase Auth. The app will create or sync your PMS profile on first successful auth."
+            : "Create a new employee account in Supabase Auth. Manager and Admin access are provisioned through Admin Users in this environment."}
         </p>
         <SignUpForm
-          allowElevatedRoles={env.ALLOW_ELEVATED_SELF_SIGNUP}
+          allowElevatedRoles={allowElevatedRoles}
           managerOptions={managers.rows.map((manager) => ({
             id: manager.id,
             fullName: manager.full_name,

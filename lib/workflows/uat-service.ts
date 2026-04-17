@@ -1,14 +1,28 @@
-import type { UatOverview, UatScenarioRecord } from "@/lib/db/types";
+import type {
+  UatFixtureAccountRecord,
+  UatExecutionRecord,
+  UatOverview,
+  UatScenarioRecord,
+  UatSeededScenarioRecord
+} from "@/lib/db/types";
 import { getInternalJobSummary, getSmtpSummary, getSupabaseEnvSummary } from "@/lib/config/env";
 import { dbQuery } from "@/lib/db/server";
 import { getReadinessState } from "@/lib/workflows/readiness-rules";
+import { SEEDED_UAT_FIXTURES } from "@/lib/workflows/uat-fixtures";
 
 export async function getUatOverview(): Promise<UatOverview> {
   const envSummary = getSupabaseEnvSummary();
   const smtp = getSmtpSummary();
   const scheduler = getInternalJobSummary();
 
-  const [countsResult, automatedRunResult] = await Promise.all([
+  const [
+    countsResult,
+    automatedRunResult,
+    fixtureProfilesResult,
+    seededScenarioResult,
+    executionResult
+  ] =
+    await Promise.all([
     dbQuery<{
       active_employees: number | string;
       active_managers: number | string;
@@ -116,11 +130,91 @@ export async function getUatOverview(): Promise<UatOverview> {
         order by audit.created_at desc
         limit 1
       `
+    ),
+    dbQuery<{
+      email: string;
+      auth_linked: boolean;
+      is_active: boolean;
+      roles: string[] | null;
+    }>(
+      `
+        select
+          p.email,
+          p.auth_user_id is not null as auth_linked,
+          p.is_active,
+          array_remove(array_agg(distinct ur.role), null) as roles
+        from public.profiles p
+        left join public.user_roles ur on ur.profile_id = p.id
+        where lower(p.email) = any($1::text[])
+        group by p.id, p.email, p.auth_user_id, p.is_active
+      `,
+      [SEEDED_UAT_FIXTURES.map((fixture) => fixture.email.toLowerCase())]
+    ),
+    dbQuery<{
+      pending_goal_count: number | string;
+      blocked_probation_count: number | string;
+      open_flag_count: number | string;
+      scheduled_discussion_count: number | string;
+    }>(
+      `
+        select
+          (
+            select count(*)::int
+            from public.goals g
+            join public.profiles p on p.id = g.owner_profile_id
+            where lower(p.email) = lower('ishita.gupta@pms.local')
+              and g.status = 'pending_approval'
+          ) as pending_goal_count,
+          (
+            select count(*)::int
+            from public.probation_checkpoints pc
+            join public.probation_cases pcase on pcase.id = pc.probation_case_id
+            join public.profiles p on p.id = pcase.employee_profile_id
+            where lower(p.email) = lower('rohan.mehta@pms.local')
+              and pc.status = 'blocked'
+          ) as blocked_probation_count,
+          (
+            select count(*)::int
+            from public.flags f
+            where f.status in ('open', 'in_review', 'escalated')
+          ) as open_flag_count,
+          (
+            select count(*)::int
+            from public.cycle_enrollments ce
+            join public.profiles p on p.id = ce.employee_profile_id
+            where lower(p.email) = lower('ishita.gupta@pms.local')
+              and ce.discussion_status = 'scheduled'
+          ) as scheduled_discussion_count
+      `
+    ),
+    dbQuery<{
+      scenario_key: string;
+      outcome: string | null;
+      actor_name: string | null;
+      created_at_label: string;
+      note: string | null;
+      tested_account_email: string | null;
+    }>(
+      `
+        select distinct on ((audit.metadata ->> 'scenarioKey'))
+          audit.metadata ->> 'scenarioKey' as scenario_key,
+          audit.metadata ->> 'outcome' as outcome,
+          actor.full_name as actor_name,
+          to_char(audit.created_at, 'DD Mon YYYY HH24:MI') as created_at_label,
+          audit.metadata ->> 'note' as note,
+          audit.metadata ->> 'testedAccountEmail' as tested_account_email
+        from public.audit_logs audit
+        left join public.profiles actor on actor.id = audit.actor_profile_id
+        where audit.entity_type = 'uat_execution'
+        order by (audit.metadata ->> 'scenarioKey'), audit.created_at desc
+      `
     )
   ]);
 
   const counts = countsResult.rows[0];
   const latestAutomatedRun = automatedRunResult.rows[0];
+  const seededScenarioCounts = seededScenarioResult.rows[0];
+  const latestExecutionRows = executionResult.rows;
 
   const activeEmployees = Number(counts?.active_employees ?? 0);
   const activeManagers = Number(counts?.active_managers ?? 0);
@@ -141,6 +235,116 @@ export async function getUatOverview(): Promise<UatOverview> {
         1000 * 60 * 60 * 36
       : false;
 
+  const fixtureProfileMap = new Map(
+    fixtureProfilesResult.rows.map((row) => [row.email.trim().toLowerCase(), row])
+  );
+  const executionMap = new Map<string, UatExecutionRecord>(
+    latestExecutionRows.map((row) => [
+      row.scenario_key,
+      {
+        scenarioKey: row.scenario_key,
+        outcome:
+          row.outcome === "passed" || row.outcome === "follow_up"
+            ? row.outcome
+            : "blocked",
+        actorName: row.actor_name?.trim() || "Unknown tester",
+        testedAt: row.created_at_label,
+        note: row.note,
+        testedAccountEmail: row.tested_account_email
+      }
+    ])
+  );
+
+  const fixtureAccounts: UatFixtureAccountRecord[] = SEEDED_UAT_FIXTURES.map((fixture) => {
+    const matched = fixtureProfileMap.get(fixture.email.toLowerCase());
+    const status = matched
+      ? matched.auth_linked && matched.is_active
+        ? "ready"
+        : "attention"
+      : "blocked";
+
+    const notes = [...fixture.notes];
+
+    if (!matched) {
+      notes.push("Seed profile missing from database.");
+    } else {
+      if (!matched.auth_linked) {
+        notes.push("Auth login has not been prepared yet.");
+      }
+
+      if (!matched.is_active) {
+        notes.push("Profile is currently inactive.");
+      }
+    }
+
+    return {
+      key: fixture.key,
+      title: fixture.title,
+      email: fixture.email,
+      roles: matched?.roles?.length ? matched.roles : fixture.roles,
+      temporaryPassword: fixture.temporaryPassword,
+      status,
+      authLinked: Boolean(matched?.auth_linked),
+      description: fixture.description,
+      notes
+    };
+  });
+
+  const seededScenarios: UatSeededScenarioRecord[] = [
+    {
+      key: "goal-approval-seed",
+      title: "Employee pending-goal approval",
+      status:
+        Number(seededScenarioCounts?.pending_goal_count ?? 0) > 0 ? "ready" : "blocked",
+      description:
+        "The primary employee fixture should already have a pending goal waiting for manager approval.",
+      ownerEmail: "ishita.gupta@pms.local",
+      linkedRoute: "/goals/approvals",
+      evidence: `${Number(seededScenarioCounts?.pending_goal_count ?? 0)} pending goal record(s) found for Ishita Gupta.`,
+      execution: executionMap.get("goal-approval-seed") ?? null
+    },
+    {
+      key: "blocked-probation-seed",
+      title: "Blocked probation routing",
+      status:
+        Number(seededScenarioCounts?.blocked_probation_count ?? 0) > 0
+          ? "ready"
+          : "blocked",
+      description:
+        "The blocked-routing employee fixture should surface a missing-manager probation issue for admin remediation.",
+      ownerEmail: "rohan.mehta@pms.local",
+      linkedRoute: "/admin/probation",
+      evidence: `${Number(seededScenarioCounts?.blocked_probation_count ?? 0)} blocked probation checkpoint(s) found for Rohan Mehta.`,
+      execution: executionMap.get("blocked-probation-seed") ?? null
+    },
+    {
+      key: "flag-review-seed",
+      title: "Open red-flag review",
+      status:
+        Number(seededScenarioCounts?.open_flag_count ?? 0) > 0 ? "ready" : "attention",
+      description:
+        "Admin should have at least one seeded flag review case available for compliance/UAT validation.",
+      ownerEmail: "aarav.shah@pms.local",
+      linkedRoute: "/flags",
+      evidence: `${Number(seededScenarioCounts?.open_flag_count ?? 0)} open or escalated flag(s) currently available.`,
+      execution: executionMap.get("flag-review-seed") ?? null
+    },
+    {
+      key: "review-discussion-seed",
+      title: "Scheduled review discussion",
+      status:
+        Number(seededScenarioCounts?.scheduled_discussion_count ?? 0) > 0
+          ? "ready"
+          : "attention",
+      description:
+        "The primary employee fixture should have a scheduled review discussion to test review progress and discussion completion.",
+      ownerEmail: "ishita.gupta@pms.local",
+      linkedRoute: "/reviews",
+      evidence: `${Number(seededScenarioCounts?.scheduled_discussion_count ?? 0)} scheduled review discussion record(s) found for Ishita Gupta.`,
+      execution: executionMap.get("review-discussion-seed") ?? null
+    }
+  ];
+
   const scenarios: UatScenarioRecord[] = [
     {
       id: "employee",
@@ -154,6 +358,8 @@ export async function getUatOverview(): Promise<UatOverview> {
         "Validate that an employee can access the personal dashboard, create/edit/submit goals, and complete self-driven workflow tasks.",
       liveEvidence: `${activeEmployees} active employee(s), ${activeCycles} active review cycle(s), ${pendingApprovals} goal approval(s) currently pending.`,
       href: "/goals",
+      recommendedEmail: "ishita.gupta@pms.local",
+      execution: executionMap.get("employee") ?? null,
       steps: [
         "Sign in as an employee and confirm the personal dashboard renders personal goals and feedback context.",
         "Create an individual goal draft, edit it, and submit it for approval.",
@@ -172,6 +378,8 @@ export async function getUatOverview(): Promise<UatOverview> {
         "Validate approvals, team dashboard visibility, manager review submission, and manager-side probation handling.",
       liveEvidence: `${activeManagers} active manager(s), ${employeesWithoutManager} employee(s) currently missing a reporting manager.`,
       href: "/goals/approvals",
+      recommendedEmail: "neha.rao@pms.local",
+      execution: executionMap.get("manager") ?? null,
       steps: [
         "Sign in as a manager and confirm the team dashboard shows team goals, ratings, and pending approvals.",
         "Approve or reject an employee goal and confirm the employee notification path updates.",
@@ -184,12 +392,17 @@ export async function getUatOverview(): Promise<UatOverview> {
       role: "admin",
       state: getReadinessState({
         blocked: activeAdmins === 0 || !envSummary.adminKeyPresent,
-        attention: unlinkedProfiles > 0 || blockedProbation > 0
+        attention:
+          unlinkedProfiles > 0 ||
+          blockedProbation > 0 ||
+          envSummary.allowElevatedSelfSignup
       }),
       description:
         "Validate admin provisioning, cycle/probation control, reporting, and escalation handling across the PMS platform.",
-      liveEvidence: `${activeAdmins} active admin(s), ${unlinkedProfiles} unlinked profile(s), ${blockedProbation} blocked probation checkpoint(s).`,
+      liveEvidence: `${activeAdmins} active admin(s), ${unlinkedProfiles} unlinked profile(s), ${blockedProbation} blocked probation checkpoint(s), elevated self-signup ${envSummary.allowElevatedSelfSignup ? "enabled" : "disabled"}.`,
       href: "/admin/users",
+      recommendedEmail: "aarav.shah@pms.local",
+      execution: executionMap.get("admin") ?? null,
       steps: [
         "Provision or invite a user from Admin Users and confirm the profile links correctly.",
         "Review admin cycle, probation, and ownership-transfer actions for a live record.",
@@ -207,6 +420,8 @@ export async function getUatOverview(): Promise<UatOverview> {
         "Validate the multi-role toggle so users who are both employee and manager can switch workspaces without losing the correct permissions.",
       liveEvidence: `${playerCoaches} manager+employee account(s) currently available for testing.`,
       href: "/dashboard",
+      recommendedEmail: "neha.rao@pms.local",
+      execution: executionMap.get("player-coach") ?? null,
       steps: [
         "Sign in as a user who has both employee and manager roles.",
         "Switch between My performance and My team's performance.",
@@ -230,6 +445,8 @@ export async function getUatOverview(): Promise<UatOverview> {
         "Validate production-style notification delivery, processor automation, and operational queues that keep the product aligned with the PRD timelines.",
       liveEvidence: `${failedDeliveries} failed delivery record(s), ${dueNotifications} due notification(s), ${openFlags} open/escalated flag(s). Latest automated run: ${latestAutomatedRun?.created_at_label ?? "none"}${latestAutomatedRun?.trigger ? ` via ${latestAutomatedRun.trigger}` : ""}.`,
       href: "/admin/notifications",
+      recommendedEmail: "aarav.shah@pms.local",
+      execution: executionMap.get("operations") ?? null,
       steps: [
         "Send an SMTP test email and confirm provider delivery succeeds.",
         "Trigger the internal notification processor route or scheduled job and confirm a successful automated run is recorded.",
@@ -247,6 +464,12 @@ export async function getUatOverview(): Promise<UatOverview> {
   ).length;
 
   const rolloutNotes: string[] = [];
+
+  if (envSummary.allowElevatedSelfSignup) {
+    rolloutNotes.push(
+      "Disable elevated self-signup before production so manager and Admin access remain invite-only."
+    );
+  }
 
   if (!scheduler.configured) {
     rolloutNotes.push(
@@ -310,6 +533,8 @@ export async function getUatOverview(): Promise<UatOverview> {
       }
     ],
     scenarios,
+    fixtureAccounts,
+    seededScenarios,
     rolloutNotes
   };
 }

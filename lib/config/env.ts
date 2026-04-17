@@ -1,5 +1,21 @@
 import { z } from "zod";
 
+const optionalBoolean = z.preprocess((value) => {
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+
+    if (normalized === "true") {
+      return true;
+    }
+
+    if (normalized === "false") {
+      return false;
+    }
+  }
+
+  return value;
+}, z.boolean().optional());
+
 const envSchema = z.object({
   NEXT_PUBLIC_SUPABASE_URL: z.string().url().optional(),
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: z.string().optional(),
@@ -14,6 +30,9 @@ const envSchema = z.object({
   SMTP_PORT: z.coerce.number().optional(),
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
+  SMTP_SECURE: optionalBoolean,
+  SMTP_REQUIRE_TLS: optionalBoolean,
+  SMTP_TLS_REJECT_UNAUTHORIZED: optionalBoolean,
   SMTP_FROM_EMAIL: z.string().optional(),
   SMTP_FROM_NAME: z.string().optional(),
   ALLOW_ELEVATED_SELF_SIGNUP: z
@@ -37,6 +56,9 @@ export const env = envSchema.parse({
   SMTP_PORT: process.env.SMTP_PORT,
   SMTP_USER: process.env.SMTP_USER,
   SMTP_PASS: process.env.SMTP_PASS,
+  SMTP_SECURE: process.env.SMTP_SECURE,
+  SMTP_REQUIRE_TLS: process.env.SMTP_REQUIRE_TLS,
+  SMTP_TLS_REJECT_UNAUTHORIZED: process.env.SMTP_TLS_REJECT_UNAUTHORIZED,
   SMTP_FROM_EMAIL: process.env.SMTP_FROM_EMAIL,
   SMTP_FROM_NAME: process.env.SMTP_FROM_NAME,
   ALLOW_ELEVATED_SELF_SIGNUP: process.env.ALLOW_ELEVATED_SELF_SIGNUP
@@ -55,12 +77,23 @@ export function getSupabaseAdminKey() {
 }
 
 export function getSmtpSummary() {
+  const host = env.SMTP_HOST ?? "";
+  const port = env.SMTP_PORT ?? null;
+  const authConfigured = Boolean(env.SMTP_USER && env.SMTP_PASS);
+  const authPartiallyConfigured =
+    Boolean(env.SMTP_USER || env.SMTP_PASS) && !authConfigured;
+
   return {
-    configured: Boolean(env.SMTP_HOST && env.SMTP_PORT),
-    host: env.SMTP_HOST ?? "",
-    port: env.SMTP_PORT ?? null,
+    configured: Boolean(host && port && !authPartiallyConfigured),
+    host,
+    port,
     userConfigured: Boolean(env.SMTP_USER),
     passwordConfigured: Boolean(env.SMTP_PASS),
+    authConfigured,
+    authPartiallyConfigured,
+    secure: env.SMTP_SECURE ?? port === 465,
+    requireTls: env.SMTP_REQUIRE_TLS ?? port === 587,
+    tlsRejectUnauthorized: env.SMTP_TLS_REJECT_UNAUTHORIZED ?? true,
     fromEmail: env.SMTP_FROM_EMAIL ?? "no-reply@pms.local",
     fromName: env.SMTP_FROM_NAME ?? "PMS"
   };

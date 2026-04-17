@@ -191,6 +191,20 @@ export async function getReadinessOverview(): Promise<ReadinessOverview> {
       href: "/admin/users"
     },
     {
+      title: `Elevated signup governance: ${getReadinessLabel(
+        getReadinessState({
+          attention: envSummary.allowElevatedSelfSignup
+        })
+      )}`,
+      description: envSummary.allowElevatedSelfSignup
+        ? "Manager/Admin self-signup is still enabled. For production rollout, elevated roles should be invite-only."
+        : "Public signup is limited to employees; elevated roles must be provisioned through Admin operations.",
+      state: getReadinessState({
+        attention: envSummary.allowElevatedSelfSignup
+      }),
+      href: "/admin/users"
+    },
+    {
       title: `Database runtime: ${getReadinessLabel(
         getReadinessState({
           blocked: !envSummary.databaseUrlPresent
@@ -369,7 +383,7 @@ export async function getReadinessOverview(): Promise<ReadinessOverview> {
         "Admin provisioning, lifecycle controls, ownership transfer, and multi-role workspace switching are implemented and available in-app.",
       state: getReadinessState({
         blocked: !envSummary.adminKeyPresent,
-        attention: unlinkedProfiles > 0
+        attention: unlinkedProfiles > 0 || envSummary.allowElevatedSelfSignup
       }),
       href: "/admin/users"
     },
@@ -388,6 +402,10 @@ export async function getReadinessOverview(): Promise<ReadinessOverview> {
   ];
 
   const nextActions: string[] = [];
+
+  if (envSummary.allowElevatedSelfSignup) {
+    nextActions.push("Disable elevated self-signup for production so manager and Admin access remain invite-only.");
+  }
 
   if (!scheduler.configured) {
     nextActions.push("Set INTERNAL_JOB_SECRET and use the internal notification processor route so deployment scheduling can call a protected endpoint.");
