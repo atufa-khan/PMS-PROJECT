@@ -16,6 +16,8 @@ This repository contains the current implementation of the Performance Managemen
 - Supabase-ready schema with UUID primary keys throughout
 - Seed SQL with pseudo data aligned to the PMS domain
 - Diagnostic and notification-processing scripts
+- Secure internal notification processor route for deployment schedulers
+- Admin UAT workspace for role-based rollout validation
 
 ## Current focus
 
@@ -23,6 +25,7 @@ The current implementation covers the main PMS workflow foundation and is now fo
 
 - production-safe account provisioning
 - scheduled notifications and reminders
+- deployment-safe notification scheduling
 - reporting and export depth
 - admin transfer and succession workflows
 - end-to-end UAT across all roles
@@ -38,5 +41,5 @@ The current implementation covers the main PMS workflow foundation and is now fo
 1. Copy `.env.example` to `.env.local` and fill in the real values
 2. Run the Supabase migration and seed files
 3. Configure SMTP and deployment-managed secrets
-4. Schedule `npm run notifications:process` in the target environment
-5. Complete final UAT and production hardening for provisioning and exports
+4. Set `INTERNAL_JOB_SECRET` and schedule either `/api/internal/notifications/process` or `npm run notifications:process` in the target environment
+5. Use `/admin/uat` and `/admin/readiness` to complete final rollout validation with real users

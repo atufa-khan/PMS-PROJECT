@@ -1,4 +1,4 @@
-import { getSmtpSummary } from "@/lib/config/env";
+import { getInternalJobSummary, getSmtpSummary } from "@/lib/config/env";
 import type {
   NotificationFailureRecord,
   NotificationOperationsOverview,
@@ -120,12 +120,23 @@ export async function getNotificationOperationsOverview(): Promise<NotificationO
     createdAt: row.created_at_label
   }));
 
+  const latestAutomatedRun = recentRuns.find((run) =>
+    ["script", "internal_api"].includes(run.trigger)
+  );
+  const scheduler = getInternalJobSummary();
+
   return {
     counts: {
       pendingDeliveries: Number(counts?.pending_deliveries ?? 0),
       failedDeliveries: Number(counts?.failed_deliveries ?? 0),
       sentLast24Hours: Number(counts?.sent_last_24_hours ?? 0),
       dueNotifications: Number(counts?.due_notifications ?? 0)
+    },
+    scheduler: {
+      configured: scheduler.configured,
+      endpoint: scheduler.endpoint,
+      lastAutomatedRunAt: latestAutomatedRun?.createdAt ?? null,
+      lastAutomatedTrigger: latestAutomatedRun?.trigger ?? null
     },
     smtp: getSmtpSummary(),
     recentFailures,

@@ -78,7 +78,7 @@ export default async function AdminNotificationsPage({
           title="Delivery readiness"
           description="SMTP remains deployment-managed, but this workspace shows whether the runtime is ready and gives Admins a safe manual fallback."
         >
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-4 md:grid-cols-3">
             <div className="rounded-2xl border border-border bg-stone-50 p-4">
               <p className="text-sm text-muted">SMTP status</p>
               <p className="mt-3 text-2xl font-semibold text-ink">
@@ -106,6 +106,21 @@ export default async function AdminNotificationsPage({
               {lastRun?.errorMessage ? (
                 <p className="mt-2 text-sm text-accentWarm">{lastRun.errorMessage}</p>
               ) : null}
+            </div>
+
+            <div className="rounded-2xl border border-border bg-stone-50 p-4">
+              <p className="text-sm text-muted">Scheduler endpoint</p>
+              <p className="mt-3 text-2xl font-semibold text-ink">
+                {overview.scheduler.configured ? "Ready" : "Missing secret"}
+              </p>
+              <p className="mt-2 break-all text-sm text-muted">
+                {overview.scheduler.endpoint}
+              </p>
+              <p className="mt-2 text-sm text-muted">
+                {overview.scheduler.lastAutomatedRunAt
+                  ? `Latest automated run: ${overview.scheduler.lastAutomatedRunAt} via ${overview.scheduler.lastAutomatedTrigger}`
+                  : "No automated route-triggered run recorded yet."}
+              </p>
             </div>
           </div>
 
@@ -141,9 +156,14 @@ export default async function AdminNotificationsPage({
           </div>
 
           <div className="mt-4 rounded-2xl border border-dashed border-border bg-stone-50 p-4 text-sm text-muted">
-            Deployment still needs a real recurring scheduler for `npm run notifications:process`.
-            Until then, Admins can use this manual runner to keep reminders, approvals, and
-            escalations moving.
+            Deployment can now schedule the internal route at{" "}
+            <span className="font-medium text-stone-700">
+              {overview.scheduler.endpoint}
+            </span>{" "}
+            with either the <span className="font-medium text-stone-700">x-pms-job-secret</span>{" "}
+            header or a bearer token using <span className="font-medium text-stone-700">INTERNAL_JOB_SECRET</span>.
+            Until that recurring scheduler is wired, Admins can still use this manual runner to
+            keep reminders, approvals, and escalations moving.
           </div>
         </SectionCard>
 

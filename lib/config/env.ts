@@ -9,6 +9,7 @@ const envSchema = z.object({
   DATABASE_URL: z.string().optional(),
   DIRECT_URL: z.string().optional(),
   APP_URL: z.string().url().default("http://localhost:3000"),
+  INTERNAL_JOB_SECRET: z.string().optional(),
   SMTP_HOST: z.string().optional(),
   SMTP_PORT: z.coerce.number().optional(),
   SMTP_USER: z.string().optional(),
@@ -31,6 +32,7 @@ export const env = envSchema.parse({
   DATABASE_URL: process.env.DATABASE_URL,
   DIRECT_URL: process.env.DIRECT_URL,
   APP_URL: process.env.APP_URL,
+  INTERNAL_JOB_SECRET: process.env.INTERNAL_JOB_SECRET,
   SMTP_HOST: process.env.SMTP_HOST,
   SMTP_PORT: process.env.SMTP_PORT,
   SMTP_USER: process.env.SMTP_USER,
@@ -64,6 +66,13 @@ export function getSmtpSummary() {
   };
 }
 
+export function getInternalJobSummary() {
+  return {
+    configured: Boolean(env.INTERNAL_JOB_SECRET),
+    endpoint: `${env.APP_URL}/api/internal/notifications/process`
+  };
+}
+
 export function maskSecret(value: string | undefined | null, visibleTail = 6) {
   if (!value) {
     return "(missing)";
@@ -87,6 +96,7 @@ export function getSupabaseEnvSummary() {
     databaseUrlPresent: Boolean(env.DATABASE_URL),
     directUrlPresent: Boolean(env.DIRECT_URL),
     appUrl: env.APP_URL,
+    internalJobSecretPresent: Boolean(env.INTERNAL_JOB_SECRET),
     smtpConfigured: getSmtpSummary().configured,
     allowElevatedSelfSignup: env.ALLOW_ELEVATED_SELF_SIGNUP
   };

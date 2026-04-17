@@ -16,6 +16,10 @@ import {
   getReadinessLabel,
   getReadinessState
 } from "../lib/workflows/readiness-rules.ts";
+import {
+  isInternalJobAuthorized,
+  resolveInternalJobSecret
+} from "../lib/workflows/job-auth.ts";
 import { toCsv } from "../lib/reports/csv.ts";
 
 const results = [];
@@ -140,6 +144,43 @@ await run("getReadinessLabel returns the expected UI label", () => {
   assert.equal(getReadinessLabel("ready"), "Ready");
   assert.equal(getReadinessLabel("attention"), "Needs attention");
   assert.equal(getReadinessLabel("blocked"), "Blocked");
+});
+
+await run("resolveInternalJobSecret prefers explicit header over bearer and query", () => {
+  assert.equal(
+    resolveInternalJobSecret({
+      headerSecret: "header-secret",
+      authorizationHeader: "Bearer bearer-secret",
+      querySecret: "query-secret"
+    }),
+    "header-secret"
+  );
+
+  assert.equal(
+    resolveInternalJobSecret({
+      authorizationHeader: "Bearer bearer-secret",
+      querySecret: "query-secret"
+    }),
+    "bearer-secret"
+  );
+});
+
+await run("isInternalJobAuthorized validates the shared secret", () => {
+  assert.equal(
+    isInternalJobAuthorized({
+      expectedSecret: "shared-secret",
+      authorizationHeader: "Bearer shared-secret"
+    }),
+    true
+  );
+
+  assert.equal(
+    isInternalJobAuthorized({
+      expectedSecret: "shared-secret",
+      querySecret: "wrong-secret"
+    }),
+    false
+  );
 });
 
 await run("toCsv escapes quotes and preserves header order", () => {

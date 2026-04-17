@@ -251,6 +251,12 @@ export type NotificationOperationsOverview = {
     sentLast24Hours: number;
     dueNotifications: number;
   };
+  scheduler: {
+    configured: boolean;
+    endpoint: string;
+    lastAutomatedRunAt?: string | null;
+    lastAutomatedTrigger?: string | null;
+  };
   smtp: {
     configured: boolean;
     host: string;
@@ -262,4 +268,21 @@ export type NotificationOperationsOverview = {
   };
   recentFailures: NotificationFailureRecord[];
   recentRuns: NotificationProcessorRunRecord[];
+};
+
+export type UatScenarioRecord = {
+  id: string;
+  title: string;
+  role: "employee" | "manager" | "admin" | "operations";
+  state: "ready" | "attention" | "blocked";
+  description: string;
+  liveEvidence: string;
+  href?: string;
+  steps: string[];
+};
+
+export type UatOverview = {
+  metrics: DashboardMetric[];
+  scenarios: UatScenarioRecord[];
+  rolloutNotes: string[];
 };

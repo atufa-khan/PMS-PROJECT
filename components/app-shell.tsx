@@ -42,6 +42,7 @@ function getNavItems(role: AppRole) {
     { href: "/admin/ownership" as Route, label: "Ownership", icon: ArrowRightLeft },
     { href: "/admin/reports" as Route, label: "Reports", icon: BarChart3 },
     { href: "/admin/readiness" as Route, label: "Readiness", icon: ClipboardCheck },
+    { href: "/admin/uat" as Route, label: "UAT", icon: ClipboardCheck },
     { href: "/admin/notifications" as Route, label: "Notifications", icon: BellRing },
     { href: "/admin/settings" as Route, label: "Settings", icon: Settings2 }
   ];

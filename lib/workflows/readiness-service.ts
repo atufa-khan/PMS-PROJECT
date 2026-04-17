@@ -1,4 +1,8 @@
-import { getSupabaseEnvSummary, getSmtpSummary } from "@/lib/config/env";
+import {
+  getInternalJobSummary,
+  getSupabaseEnvSummary,
+  getSmtpSummary
+} from "@/lib/config/env";
 import { dbQuery } from "@/lib/db/server";
 import {
   getReadinessLabel,
@@ -31,7 +35,7 @@ export async function getReadinessOverview(): Promise<ReadinessOverview> {
   const envSummary = getSupabaseEnvSummary();
   const smtp = getSmtpSummary();
 
-  const [countsResult, notificationRunResult] = await Promise.all([
+  const [countsResult, notificationRunResult, automatedRunResult] = await Promise.all([
     dbQuery<{
       auth_linked_users: number | string;
       unlinked_profiles: number | string;
@@ -114,11 +118,33 @@ export async function getReadinessOverview(): Promise<ReadinessOverview> {
         order by audit.created_at desc
         limit 1
       `
+    ),
+    dbQuery<{
+      action: string;
+      trigger: string | null;
+      created_at_label: string;
+      created_at_raw: string;
+    }>(
+      `
+        select
+          audit.action,
+          audit.metadata ->> 'trigger' as trigger,
+          to_char(audit.created_at, 'DD Mon YYYY HH24:MI') as created_at_label,
+          audit.created_at::text as created_at_raw
+        from public.audit_logs audit
+        where audit.entity_type = 'notification_ops'
+          and audit.action in ('processor_run_success', 'processor_run_failed')
+          and audit.metadata ->> 'trigger' in ('script', 'internal_api')
+        order by audit.created_at desc
+        limit 1
+      `
     )
   ]);
 
   const counts = countsResult.rows[0];
   const latestNotificationRun = notificationRunResult.rows[0];
+  const latestAutomatedRun = automatedRunResult.rows[0];
+  const scheduler = getInternalJobSummary();
 
   const authLinkedUsers = Number(counts?.auth_linked_users ?? 0);
   const unlinkedProfiles = Number(counts?.unlinked_profiles ?? 0);
@@ -130,10 +156,9 @@ export async function getReadinessOverview(): Promise<ReadinessOverview> {
   const failedDeliveries = Number(counts?.failed_deliveries ?? 0);
   const dueNotifications = Number(counts?.due_notifications ?? 0);
 
-  const recentScriptRun =
-    latestNotificationRun?.trigger === "script" &&
-    latestNotificationRun.created_at_raw
-      ? Date.now() - new Date(latestNotificationRun.created_at_raw).getTime() <
+  const recentAutomatedRun =
+    latestAutomatedRun?.created_at_raw
+      ? Date.now() - new Date(latestAutomatedRun.created_at_raw).getTime() <
         1000 * 60 * 60 * 36
       : false;
 
@@ -177,6 +202,20 @@ export async function getReadinessOverview(): Promise<ReadinessOverview> {
       state: getReadinessState({
         blocked: !envSummary.databaseUrlPresent
       })
+    },
+    {
+      title: `Internal scheduler secret: ${getReadinessLabel(
+        getReadinessState({
+          attention: !scheduler.configured
+        })
+      )}`,
+      description: scheduler.configured
+        ? "The internal notification processor route is protected and ready for cron/scheduler use."
+        : "Set INTERNAL_JOB_SECRET to enable the secure internal scheduler route for notification processing.",
+      state: getReadinessState({
+        attention: !scheduler.configured
+      }),
+      href: "/admin/notifications"
     },
     {
       title: `SMTP delivery: ${getReadinessLabel(
@@ -337,12 +376,12 @@ export async function getReadinessOverview(): Promise<ReadinessOverview> {
     {
       title: "Notification automation and rollout readiness",
       description:
-        recentScriptRun && smtp.configured
-          ? "Notification automation is configured and has a recent script-based processor run."
+        recentAutomatedRun && scheduler.configured && smtp.configured
+          ? "Notification automation is configured and has a recent automated processor run."
           : "Manual processing exists in-app, but deployment scheduling and/or SMTP still need final rollout setup.",
       state: getReadinessState({
         blocked: !smtp.configured,
-        attention: !recentScriptRun
+        attention: !scheduler.configured || !recentAutomatedRun
       }),
       href: "/admin/notifications"
     }
@@ -350,12 +389,16 @@ export async function getReadinessOverview(): Promise<ReadinessOverview> {
 
   const nextActions: string[] = [];
 
+  if (!scheduler.configured) {
+    nextActions.push("Set INTERNAL_JOB_SECRET and use the internal notification processor route so deployment scheduling can call a protected endpoint.");
+  }
+
   if (!smtp.configured) {
     nextActions.push("Configure real SMTP/provider credentials so email delivery moves beyond in-app notifications.");
   }
 
-  if (!recentScriptRun) {
-    nextActions.push("Schedule `npm run notifications:process` in deployment so reminder and escalation automation runs without manual intervention.");
+  if (!recentAutomatedRun) {
+    nextActions.push("Schedule either the internal notification processor route or `npm run notifications:process` in deployment so reminder and escalation automation runs without manual intervention.");
   }
 
   if (employeesWithoutManager > 0) {
