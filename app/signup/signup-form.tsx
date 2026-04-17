@@ -11,13 +11,15 @@ const initialState: SignUpActionState = {
 };
 
 export function SignUpForm({
-  managerOptions
+  managerOptions,
+  allowElevatedRoles
 }: {
   managerOptions: Array<{
     id: string;
     fullName: string;
     email: string;
   }>;
+  allowElevatedRoles: boolean;
 }) {
   const [state, formAction] = useActionState(signUpAction, initialState);
   const [role, setRole] = useState("employee");
@@ -50,8 +52,8 @@ export function SignUpForm({
           className="w-full rounded-2xl border border-border bg-stone-50 px-4 py-3 outline-none"
         >
           <option value="employee">Employee</option>
-          <option value="manager">Manager</option>
-          <option value="admin">Admin (HR)</option>
+          {allowElevatedRoles ? <option value="manager">Manager</option> : null}
+          {allowElevatedRoles ? <option value="admin">Admin (HR)</option> : null}
         </select>
       </label>
       {role === "employee" ? (
@@ -100,6 +102,11 @@ export function SignUpForm({
         className="w-full rounded-2xl bg-accent px-4 py-3 font-medium text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-60"
       />
       <p className="text-center text-sm text-muted">
+        {!allowElevatedRoles ? (
+          <span className="mb-3 block">
+            Elevated roles are currently provisioned by Admin only.
+          </span>
+        ) : null}
         Already have an account?{" "}
         <Link href="/login" className="text-accent underline underline-offset-4">
           Sign in

@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test": "node --no-warnings ./scripts/run-smoke-tests.mjs",
     "typecheck": "tsc --noEmit",
     "debug:supabase": "node ./scripts/debug-supabase.mjs",
     "debug:db": "node ./scripts/debug-db.mjs",

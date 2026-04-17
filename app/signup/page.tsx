@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { SignUpForm } from "@/app/signup/signup-form";
+import { env } from "@/lib/config/env";
 import { dbQuery } from "@/lib/db/server";
 
 export default async function SignUpPage() {
@@ -30,6 +31,7 @@ export default async function SignUpPage() {
           sync your PMS profile on first successful auth.
         </p>
         <SignUpForm
+          allowElevatedRoles={env.ALLOW_ELEVATED_SELF_SIGNUP}
           managerOptions={managers.rows.map((manager) => ({
             id: manager.id,
             fullName: manager.full_name,

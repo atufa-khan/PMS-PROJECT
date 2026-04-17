@@ -1,6 +1,6 @@
-# PMS Platform Foundation
+# PMS Platform
 
-This repository now contains the first implementation foundation for the Performance Management System described in:
+This repository contains the current implementation of the Performance Management System described in:
 
 - `project_goal.md`
 - `implementation.md`
@@ -8,35 +8,35 @@ This repository now contains the first implementation foundation for the Perform
 
 ## What is included
 
-- Next.js App Router project structure
+- Next.js App Router application with Supabase-backed auth
 - TypeScript and Tailwind configuration
-- Role-aware application shell and route scaffolding
-- Demo workflow services for dashboard, goals, approvals, and probation
+- Role-aware dashboards and application shell
+- Goal management, approvals, reviews, probation, and flags workflows
+- Admin settings, reporting, ownership-transfer, user provisioning, and cycle/probation operations
 - Supabase-ready schema with UUID primary keys throughout
 - Seed SQL with pseudo data aligned to the PMS domain
+- Diagnostic and notification-processing scripts
 
 ## Current focus
 
-This foundation intentionally targets the first milestone from the plan:
+The current implementation covers the main PMS workflow foundation and is now focused on operational hardening:
 
-- authentication structure for all three roles
-- employee and manager goal workflows
-- probation Day 30/60/80 modeling
-- cross-share workflow foundation
-- Admin monitoring surface
-- audit-oriented schema
+- production-safe account provisioning
+- scheduled notifications and reminders
+- reporting and export depth
+- admin transfer and succession workflows
+- end-to-end UAT across all roles
 
 ## Important notes
 
-- The workspace did not start with an existing app, so this implementation begins from scratch.
-- Runtime packages are declared but not yet installed.
-- Supabase Auth wiring is represented by placeholders and demo session data until the environment is installed and connected.
 - The SQL schema is designed for Supabase Postgres with RLS and `gen_random_uuid()`.
+- Local development can run entirely on pooled Postgres connectivity if direct DB host resolution is unavailable on the machine.
+- Elevated self-signup can be disabled with `ALLOW_ELEVATED_SELF_SIGNUP=false`.
 
 ## Next steps
 
-1. Install dependencies with `npm install`
-2. Create `.env.local` with your Supabase and app values
-3. Run the Supabase migration and seed files
-4. Replace demo session/data helpers with real Supabase SSR reads and writes
-5. Implement the first server actions for goal submission, approval, and probation feedback
+1. Copy `.env.example` to `.env.local` and fill in the real values
+2. Run the Supabase migration and seed files
+3. Configure SMTP and deployment-managed secrets
+4. Schedule `npm run notifications:process` in the target environment
+5. Complete final UAT and production hardening for provisioning and exports

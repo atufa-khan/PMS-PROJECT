@@ -420,6 +420,7 @@ async function ensureProbationWorkflow(client) {
 async function queueProbationReminderCadence(client) {
   console.log("Queueing probation reminder cadence...");
   const escalationAdmin = await findEscalationAdminProfileId(client);
+  let queued = 0;
 
   const pendingRequests = await client.query(`
     select
@@ -445,25 +446,29 @@ async function queueProbationReminderCadence(client) {
     const overdueDays = Math.floor((now.getTime() - dueAt.getTime()) / (1000 * 60 * 60 * 24));
 
     if ([2, 4, 6].includes(overdueDays)) {
-      await insertNotificationIfMissing(client, {
+      const inserted = await insertNotificationIfMissing(client, {
         recipientProfileId: request.recipient_profile_id,
         templateKey: `probation_feedback_reminder_${request.id}_${overdueDays}`,
         subject: "Probation feedback reminder",
         body: `Day ${request.checkpoint_day} feedback for ${request.employee_name} is overdue by ${overdueDays} days.`,
         actionUrl: "/probation"
       });
+      queued += inserted ? 1 : 0;
     }
 
     if (overdueDays >= 7) {
-      await insertNotificationIfMissing(client, {
+      const inserted = await insertNotificationIfMissing(client, {
         recipientProfileId: escalationAdmin,
         templateKey: `probation_feedback_admin_escalation_${request.id}`,
         subject: "Probation feedback escalation",
         body: `Day ${request.checkpoint_day} feedback for ${request.employee_name} is still overdue after 7 days.`,
         actionUrl: "/admin/probation"
       });
+      queued += inserted ? 1 : 0;
     }
   }
+
+  return queued;
 }
 
 async function queueReviewReminderCadence(client) {
@@ -479,8 +484,10 @@ async function queueReviewReminderCadence(client) {
   const dayOfMonth = new Date().getUTCDate();
 
   if (![5, 15, 22].includes(dayOfMonth)) {
-    return;
+    return 0;
   }
+
+  let queued = 0;
 
   for (const cycle of activeCycles.rows) {
     const enrollments = await client.query(`
@@ -509,7 +516,7 @@ async function queueReviewReminderCadence(client) {
 
     for (const enrollment of enrollments.rows) {
       if (!enrollment.has_employee_submission) {
-        await insertNotificationIfMissing(client, {
+        const inserted = await insertNotificationIfMissing(client, {
           recipientProfileId: enrollment.employee_profile_id,
           templateKey: `review_employee_reminder_${enrollment.id}_${dayOfMonth}`,
           subject: "Review self submission reminder",
@@ -517,10 +524,11 @@ async function queueReviewReminderCadence(client) {
           actionUrl: `/reviews/${cycle.id}`,
           dedupeHours: 48
         });
+        queued += inserted ? 1 : 0;
       }
 
       if (enrollment.has_employee_submission && !enrollment.has_manager_submission) {
-        await insertNotificationIfMissing(client, {
+        const inserted = await insertNotificationIfMissing(client, {
           recipientProfileId: enrollment.acting_reviewer_profile_id,
           templateKey: `review_manager_reminder_${enrollment.id}_${dayOfMonth}`,
           subject: "Manager review reminder",
@@ -528,14 +536,18 @@ async function queueReviewReminderCadence(client) {
           actionUrl: `/reviews/${cycle.id}`,
           dedupeHours: 48
         });
+        queued += inserted ? 1 : 0;
       }
     }
   }
+
+  return queued;
 }
 
 async function queueCompanySuggestionEscalations(client) {
   console.log("Queueing company-goal suggestion escalations...");
   const escalationAdmin = await findEscalationAdminProfileId(client);
+  let queued = 0;
 
   const suggestions = await client.query(`
     with latest_suggestion as (
@@ -573,7 +585,7 @@ async function queueCompanySuggestionEscalations(client) {
       continue;
     }
 
-    await insertNotificationIfMissing(client, {
+    const inserted = await insertNotificationIfMissing(client, {
       recipientProfileId: escalationAdmin,
       templateKey: `company_goal_suggestion_escalation_${suggestion.id}`,
       subject: "Company goal acknowledgment overdue",
@@ -581,18 +593,23 @@ async function queueCompanySuggestionEscalations(client) {
       actionUrl: "/goals",
       dedupeHours: 72
     });
+    queued += inserted ? 1 : 0;
   }
+
+  return queued;
 }
 
 async function queueNotifications(client) {
   console.log("Queueing workflow notifications...");
 
-  await ensureProbationWorkflow(client);
-  await queueProbationReminderCadence(client);
-  await queueReviewReminderCadence(client);
-  await queueCompanySuggestionEscalations(client);
+  let queued = 0;
 
-  await client.query(`
+  await ensureProbationWorkflow(client);
+  queued += await queueProbationReminderCadence(client);
+  queued += await queueReviewReminderCadence(client);
+  queued += await queueCompanySuggestionEscalations(client);
+
+  const pendingApprovals = await client.query(`
     insert into public.notifications (
       id,
       recipient_profile_id,
@@ -631,8 +648,9 @@ async function queueNotifications(client) {
           and existing.created_at >= timezone('utc', now()) - interval '24 hours'
       );
   `);
+  queued += pendingApprovals.rowCount;
 
-  await client.query(`
+  const feedbackDue = await client.query(`
     insert into public.notifications (
       id,
       recipient_profile_id,
@@ -666,8 +684,9 @@ async function queueNotifications(client) {
           and existing.created_at >= timezone('utc', now()) - interval '24 hours'
       );
   `);
+  queued += feedbackDue.rowCount;
 
-  await client.query(`
+  const flagReview = await client.query(`
     insert into public.notifications (
       id,
       recipient_profile_id,
@@ -701,6 +720,7 @@ async function queueNotifications(client) {
           and existing.created_at >= timezone('utc', now()) - interval '24 hours'
       );
   `);
+  queued += flagReview.rowCount;
 
   await client.query(`
     insert into public.notification_deliveries (id, notification_id, status, retry_count)
@@ -709,9 +729,11 @@ async function queueNotifications(client) {
     where not exists (
       select 1
       from public.notification_deliveries d
-      where d.notification_id = n.id
+        where d.notification_id = n.id
     );
   `);
+
+  return queued;
 }
 
 async function processNotifications(client) {
@@ -738,6 +760,8 @@ async function processNotifications(client) {
   const transport = getSmtpTransport();
   const fromEmail = process.env.SMTP_FROM_EMAIL || "no-reply@pms.local";
   const fromName = process.env.SMTP_FROM_NAME || "PMS";
+  let sentDeliveries = 0;
+  let failedDeliveries = 0;
 
   for (const row of deliveries.rows) {
     try {
@@ -764,6 +788,7 @@ async function processNotifications(client) {
         `,
         [row.delivery_id]
       );
+      sentDeliveries += 1;
     } catch (error) {
       await client.query(
         `
@@ -776,10 +801,17 @@ async function processNotifications(client) {
         `,
         [row.delivery_id, error instanceof Error ? error.message : "Unknown delivery error"]
       );
+      failedDeliveries += 1;
     }
   }
 
   console.log(`Processed ${deliveries.rowCount} notification deliveries.`);
+
+  return {
+    processedDeliveries: deliveries.rowCount,
+    sentDeliveries,
+    failedDeliveries
+  };
 }
 
 async function main() {
@@ -789,8 +821,55 @@ async function main() {
   ]);
 
   try {
-    await queueNotifications(client);
-    await processNotifications(client);
+    const queuedNotifications = await queueNotifications(client);
+    const result = await processNotifications(client);
+
+    await client.query(
+      `
+        insert into public.audit_logs (id, actor_profile_id, entity_type, entity_id, action, metadata)
+        values (
+          gen_random_uuid(),
+          null,
+          'notification_ops',
+          null,
+          'processor_run_success',
+          $1::jsonb
+        )
+      `,
+      [
+        JSON.stringify({
+          trigger: "script",
+          smtpConfigured: Boolean(process.env.SMTP_HOST && process.env.SMTP_PORT),
+          queuedNotifications,
+          processedDeliveries: result.processedDeliveries,
+          sentDeliveries: result.sentDeliveries,
+          failedDeliveries: result.failedDeliveries
+        })
+      ]
+    );
+  } catch (error) {
+    await client.query(
+      `
+        insert into public.audit_logs (id, actor_profile_id, entity_type, entity_id, action, metadata)
+        values (
+          gen_random_uuid(),
+          null,
+          'notification_ops',
+          null,
+          'processor_run_failed',
+          $1::jsonb
+        )
+      `,
+      [
+        JSON.stringify({
+          trigger: "script",
+          smtpConfigured: Boolean(process.env.SMTP_HOST && process.env.SMTP_PORT),
+          error: error instanceof Error ? error.message : "Unknown notification processing error"
+        })
+      ]
+    ).catch(() => {});
+
+    throw error;
   } finally {
     await client.end();
   }

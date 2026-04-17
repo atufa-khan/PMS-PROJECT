@@ -2,24 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/auth/permissions";
 import { getAppSession } from "@/lib/auth/session";
 import { dbQuery } from "@/lib/db/server";
-
-function toCsv(rows: Array<Record<string, string | number>>) {
-  if (rows.length === 0) {
-    return "category,label,value,detail\n";
-  }
-
-  const headers = Object.keys(rows[0]);
-  const lines = [
-    headers.join(","),
-    ...rows.map((row) =>
-      headers
-        .map((header) => `"${String(row[header] ?? "").replaceAll('"', '""')}"`)
-        .join(",")
-    )
-  ];
-
-  return `${lines.join("\n")}\n`;
-}
+import { toCsv } from "@/lib/reports/csv";
 
 export async function GET() {
   const session = await getAppSession();
@@ -104,7 +87,7 @@ export async function GET() {
     }))
   ];
 
-  return new NextResponse(toCsv(rows), {
+  return new NextResponse(toCsv(rows) || "category,label,value,detail\n", {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
       "Content-Disposition": 'attachment; filename="pms-operational-overview.csv"'

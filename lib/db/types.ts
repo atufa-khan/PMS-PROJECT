@@ -189,3 +189,77 @@ export type FlagRecord = {
   previousContext?: string | null;
   repeatContext?: string | null;
 };
+
+export type AccessRosterRecord = {
+  id: UUID;
+  fullName: string;
+  email: string;
+  roles: string[];
+  managerName?: string | null;
+  managerEmail?: string | null;
+  teamName?: string | null;
+  authLinked: boolean;
+  isActive: boolean;
+  employmentStatus?: string | null;
+  directReportCount: number;
+  activeReviewAssignments: number;
+  elevatedGoalCount: number;
+  canDeactivate: boolean;
+  lifecycleHint?: string | null;
+};
+
+export type ProvisioningEventRecord = {
+  id: UUID;
+  actorName: string;
+  action: string;
+  targetEmail: string;
+  targetRole: string;
+  mode: string;
+  managerEmail?: string | null;
+  note?: string | null;
+  createdAt: string;
+};
+
+export type NotificationFailureRecord = {
+  id: UUID;
+  subject: string;
+  recipientEmail: string;
+  channel: "email" | "in_app";
+  lastError: string;
+  retryCount: number;
+  scheduledFor: string;
+  updatedAt: string;
+};
+
+export type NotificationProcessorRunRecord = {
+  id: UUID;
+  action: string;
+  actorName: string;
+  trigger: string;
+  queuedNotifications: number;
+  processedDeliveries: number;
+  sentDeliveries: number;
+  failedDeliveries: number;
+  errorMessage?: string | null;
+  createdAt: string;
+};
+
+export type NotificationOperationsOverview = {
+  counts: {
+    pendingDeliveries: number;
+    failedDeliveries: number;
+    sentLast24Hours: number;
+    dueNotifications: number;
+  };
+  smtp: {
+    configured: boolean;
+    host: string;
+    port: number | null;
+    userConfigured: boolean;
+    passwordConfigured: boolean;
+    fromEmail: string;
+    fromName: string;
+  };
+  recentFailures: NotificationFailureRecord[];
+  recentRuns: NotificationProcessorRunRecord[];
+};

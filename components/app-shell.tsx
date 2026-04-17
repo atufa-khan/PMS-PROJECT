@@ -1,6 +1,10 @@
 import Link from "next/link";
 import type { Route } from "next";
 import {
+  ArrowRightLeft,
+  BarChart3,
+  BellRing,
+  ClipboardCheck,
   Flag,
   Goal,
   LayoutDashboard,
@@ -8,6 +12,7 @@ import {
   ShieldCheck,
   TimerReset,
   User,
+  UserPlus,
   UsersRound
 } from "lucide-react";
 import { LogoutButton } from "@/components/logout-button";
@@ -33,6 +38,11 @@ function getNavItems(role: AppRole) {
     { href: "/flags" as Route, label: "Flags", icon: Flag },
     { href: "/admin/cycles" as Route, label: "Cycle Admin", icon: UsersRound },
     { href: "/admin/probation" as Route, label: "Probation Admin", icon: ShieldCheck },
+    { href: "/admin/users" as Route, label: "Users", icon: UserPlus },
+    { href: "/admin/ownership" as Route, label: "Ownership", icon: ArrowRightLeft },
+    { href: "/admin/reports" as Route, label: "Reports", icon: BarChart3 },
+    { href: "/admin/readiness" as Route, label: "Readiness", icon: ClipboardCheck },
+    { href: "/admin/notifications" as Route, label: "Notifications", icon: BellRing },
     { href: "/admin/settings" as Route, label: "Settings", icon: Settings2 }
   ];
 }

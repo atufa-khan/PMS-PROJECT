@@ -10,6 +10,7 @@ export type AppSession = {
   role: AppRole;
   roles: AppRole[];
   email: string;
+  isActive?: boolean;
   isDemo?: boolean;
 };
 
@@ -52,12 +53,17 @@ export async function getAppSession(): Promise<AppSession> {
       };
     });
 
+    if (!profile.is_active) {
+      redirect("/login");
+    }
+
     return {
       userId: profile.id,
       fullName: profile.full_name,
       role: profile.role,
       roles: profile.roles.length > 0 ? profile.roles : [profile.role],
-      email: profile.email
+      email: profile.email,
+      isActive: profile.is_active
     };
   } catch (syncError) {
     console.error("Profile sync failed:", syncError);

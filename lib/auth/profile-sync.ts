@@ -10,6 +10,7 @@ type SyncedProfile = {
   full_name: string;
   email: string;
   role: AppRole;
+  is_active: boolean;
 };
 
 type ManagerCandidate = {
@@ -32,6 +33,13 @@ function deriveRequestedManagerProfileId(user: User) {
   return typeof user.user_metadata?.manager_profile_id === "string" &&
     user.user_metadata.manager_profile_id.trim()
     ? user.user_metadata.manager_profile_id.trim()
+    : null;
+}
+
+function deriveProvisionedProfileId(user: User) {
+  return typeof user.app_metadata?.provisioned_profile_id === "string" &&
+    user.app_metadata.provisioned_profile_id.trim()
+    ? user.app_metadata.provisioned_profile_id.trim()
     : null;
 }
 
@@ -307,6 +315,7 @@ export async function syncProfileForAuthUser(
   const email = user.email?.trim().toLowerCase();
   const requestedRole = deriveRequestedRole(user);
   const requestedManagerProfileId = deriveRequestedManagerProfileId(user);
+  const provisionedProfileId = deriveProvisionedProfileId(user);
 
   if (!email) {
     throw new Error("Authenticated user is missing an email address.");
@@ -317,9 +326,10 @@ export async function syncProfileForAuthUser(
     full_name: string;
     email: string;
     auth_user_id: string | null;
+    is_active: boolean;
   }>(
     `
-      select id, full_name, email, auth_user_id
+      select id, full_name, email, auth_user_id, is_active
       from public.profiles
       where auth_user_id = $1
       limit 1
@@ -329,6 +339,51 @@ export async function syncProfileForAuthUser(
 
   let profile = existingProfileResult.rows[0];
   let createdProfile = false;
+
+  if (!profile) {
+    if (provisionedProfileId) {
+      const provisionedProfileResult = await client.query<{
+        id: string;
+        full_name: string;
+        email: string;
+        auth_user_id: string | null;
+        is_active: boolean;
+      }>(
+        `
+          select id, full_name, email, auth_user_id, is_active
+          from public.profiles
+          where id = $1
+            and auth_user_id is null
+            and lower(email) = lower($2)
+          limit 1
+        `,
+        [provisionedProfileId, email]
+      );
+
+      const provisionedProfile = provisionedProfileResult.rows[0];
+
+      if (provisionedProfile) {
+        await client.query(
+          `
+            update public.profiles
+            set auth_user_id = $1,
+                full_name = $2,
+                email = $3,
+                updated_at = timezone('utc', now())
+            where id = $4
+          `,
+          [user.id, deriveFullName(user), email, provisionedProfile.id]
+        );
+
+        profile = {
+          ...provisionedProfile,
+          full_name: deriveFullName(user),
+          email,
+          auth_user_id: user.id
+        };
+      }
+    }
+  }
 
   if (!profile) {
     const id = randomUUID();
@@ -357,7 +412,8 @@ export async function syncProfileForAuthUser(
       id,
       full_name: fullName,
       email,
-      auth_user_id: user.id
+      auth_user_id: user.id,
+      is_active: true
     };
   } else {
     await client.query(
@@ -406,6 +462,7 @@ export async function syncProfileForAuthUser(
     id: profile.id,
     full_name: profile.full_name,
     email: profile.email,
-    role
+    role,
+    is_active: profile.is_active
   };
 }

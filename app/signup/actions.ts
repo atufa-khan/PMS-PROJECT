@@ -49,6 +49,14 @@ export async function signUpAction(
     };
   }
 
+  if (!env.ALLOW_ELEVATED_SELF_SIGNUP && parsed.data.role !== "employee") {
+    return {
+      status: "error",
+      message:
+        "Manager and Admin accounts must be provisioned through Admin operations in this environment."
+    };
+  }
+
   const supabase = await createSupabaseServerClient();
 
   if (!supabase) {
