@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "debug:supabase": "node ./scripts/debug-supabase.mjs",
     "debug:db": "node ./scripts/debug-db.mjs",
+    "db:optimize": "node ./scripts/apply-performance-indexes.mjs",
     "notifications:process": "node ./scripts/process-notifications.mjs"
   },
   "dependencies": {

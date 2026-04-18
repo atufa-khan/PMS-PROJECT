@@ -10,6 +10,31 @@ import { dbQuery } from "@/lib/db/server";
 import { getReadinessState } from "@/lib/workflows/readiness-rules";
 import { SEEDED_UAT_FIXTURES } from "@/lib/workflows/uat-fixtures";
 
+function normalizeRoleList(value: string[] | string | null | undefined): string[] {
+  if (Array.isArray(value)) {
+    return value.filter(Boolean);
+  }
+
+  if (typeof value !== "string") {
+    return [];
+  }
+
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return [];
+  }
+
+  const normalized = trimmed.startsWith("{") && trimmed.endsWith("}")
+    ? trimmed.slice(1, -1)
+    : trimmed;
+
+  return normalized
+    .split(",")
+    .map((role) => role.trim().replace(/^"(.*)"$/, "$1"))
+    .filter(Boolean);
+}
+
 export async function getUatOverview(): Promise<UatOverview> {
   const envSummary = getSupabaseEnvSummary();
   const smtp = getSmtpSummary();
@@ -135,14 +160,14 @@ export async function getUatOverview(): Promise<UatOverview> {
       email: string;
       auth_linked: boolean;
       is_active: boolean;
-      roles: string[] | null;
+      roles: string[] | string | null;
     }>(
       `
         select
           p.email,
           p.auth_user_id is not null as auth_linked,
           p.is_active,
-          array_remove(array_agg(distinct ur.role), null) as roles
+          array_remove(array_agg(distinct ur.role::text), null) as roles
         from public.profiles p
         left join public.user_roles ur on ur.profile_id = p.id
         where lower(p.email) = any($1::text[])
@@ -257,6 +282,7 @@ export async function getUatOverview(): Promise<UatOverview> {
 
   const fixtureAccounts: UatFixtureAccountRecord[] = SEEDED_UAT_FIXTURES.map((fixture) => {
     const matched = fixtureProfileMap.get(fixture.email.toLowerCase());
+    const matchedRoles = normalizeRoleList(matched?.roles);
     const status = matched
       ? matched.auth_linked && matched.is_active
         ? "ready"
@@ -281,7 +307,7 @@ export async function getUatOverview(): Promise<UatOverview> {
       key: fixture.key,
       title: fixture.title,
       email: fixture.email,
-      roles: matched?.roles?.length ? matched.roles : fixture.roles,
+      roles: matchedRoles.length ? matchedRoles : fixture.roles,
       temporaryPassword: fixture.temporaryPassword,
       status,
       authLinked: Boolean(matched?.auth_linked),

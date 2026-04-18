@@ -18,6 +18,15 @@ type ManagerCandidate = {
   team_id: string | null;
 };
 
+type ExistingProfileCandidate = {
+  id: string;
+  full_name: string;
+  email: string;
+  auth_user_id: string | null;
+  is_active: boolean;
+  roles: AppRole[] | null;
+};
+
 function deriveRequestedRole(user: User): AppRole {
   const metadataRole =
     typeof user.user_metadata?.role === "string" ? user.user_metadata.role : "";
@@ -308,6 +317,46 @@ function deriveFullName(user: User) {
     .join(" ");
 }
 
+async function findClaimableProfileByEmail(
+  client: PoolClient,
+  email: string,
+  requestedRole: AppRole
+): Promise<ExistingProfileCandidate | null> {
+  const result = await client.query<ExistingProfileCandidate>(
+    `
+      select
+        p.id,
+        p.full_name,
+        p.email,
+        p.auth_user_id,
+        p.is_active,
+        array_remove(array_agg(distinct ur.role), null) as roles
+      from public.profiles p
+      left join public.user_roles ur on ur.profile_id = p.id
+      where lower(p.email) = lower($1)
+        and p.auth_user_id is null
+      group by p.id, p.full_name, p.email, p.auth_user_id, p.is_active
+      limit 2
+    `,
+    [email]
+  );
+
+  if (result.rows.length !== 1) {
+    return null;
+  }
+
+  const candidate = result.rows[0];
+  const roles = candidate.roles ?? [];
+  const isEmployeeOnly =
+    roles.length === 0 || roles.every((role) => role === "employee");
+
+  if (requestedRole !== "employee" || !isEmployeeOnly) {
+    return null;
+  }
+
+  return candidate;
+}
+
 export async function syncProfileForAuthUser(
   client: PoolClient,
   user: User
@@ -382,6 +431,37 @@ export async function syncProfileForAuthUser(
           auth_user_id: user.id
         };
       }
+    }
+  }
+
+  if (!profile) {
+    const claimableProfile = await findClaimableProfileByEmail(
+      client,
+      email,
+      requestedRole
+    );
+
+    if (claimableProfile) {
+      const fullName = deriveFullName(user);
+
+      await client.query(
+        `
+          update public.profiles
+          set auth_user_id = $1,
+              full_name = $2,
+              email = $3,
+              updated_at = timezone('utc', now())
+          where id = $4
+        `,
+        [user.id, fullName, email, claimableProfile.id]
+      );
+
+      profile = {
+        ...claimableProfile,
+        full_name: fullName,
+        email,
+        auth_user_id: user.id
+      };
     }
   }
 

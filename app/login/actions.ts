@@ -2,8 +2,6 @@
 
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { withDbTransaction } from "@/lib/db/server";
-import { syncProfileForAuthUser } from "@/lib/auth/profile-sync";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const authSchema = z.object({
@@ -51,10 +49,6 @@ export async function loginAction(
       status: "error",
       message: error.message
     };
-  }
-
-  if (data.user) {
-    await withDbTransaction((client) => syncProfileForAuthUser(client, data.user));
   }
 
   redirect("/dashboard");

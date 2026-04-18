@@ -39,6 +39,16 @@ function getExecutionLabel(outcome: UatExecutionRecord["outcome"]) {
   return outcome === "passed" ? "Passed" : "Blocked";
 }
 
+function formatFixtureRoles(roles: string[] | string | null | undefined) {
+  if (Array.isArray(roles)) {
+    return roles.length > 0 ? roles.join(" | ") : "None assigned";
+  }
+
+  return typeof roles === "string" && roles.trim()
+    ? roles
+    : "None assigned";
+}
+
 function ExecutionSummary({
   execution
 }: {
@@ -227,7 +237,7 @@ function FixtureCard({ fixture }: { fixture: UatFixtureAccountRecord }) {
 
       <div className="mt-3 space-y-1 text-sm text-stone-700">
         <p>Email: {fixture.email}</p>
-        <p>Roles: {fixture.roles.join(" | ")}</p>
+        <p>Roles: {formatFixtureRoles(fixture.roles)}</p>
         <p>Temporary password: {fixture.temporaryPassword}</p>
         <p>Auth linked: {fixture.authLinked ? "yes" : "no"}</p>
       </div>

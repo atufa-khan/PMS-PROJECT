@@ -1,6 +1,6 @@
 import { addWorkingDays, formatDate } from "@/lib/dates/working-days";
 import type { AppSession } from "@/lib/auth/session";
-import { dbQuery } from "@/lib/db/server";
+import { dbQuery, isExpectedTransientDbError } from "@/lib/db/server";
 import type { ProbationCaseRecord, ProbationCheckpointRecord } from "@/lib/db/types";
 
 type ProbationRow = {
@@ -113,7 +113,10 @@ export async function listProbationCheckpoints(
       pendingRole: row.my_request_role
     }));
   } catch (error) {
-    console.error("listProbationCheckpoints failed:", error);
+    if (!isExpectedTransientDbError(error)) {
+      console.error("listProbationCheckpoints failed:", error);
+    }
+
     return [];
   }
 }
@@ -177,7 +180,10 @@ export async function listProbationCasesForAdmin(): Promise<ProbationCaseRecord[
       missingManager: row.missing_manager
     }));
   } catch (error) {
-    console.error("listProbationCasesForAdmin failed:", error);
+    if (!isExpectedTransientDbError(error)) {
+      console.error("listProbationCasesForAdmin failed:", error);
+    }
+
     return [];
   }
 }
@@ -197,7 +203,10 @@ export async function listAssignableManagers() {
 
     return result.rows;
   } catch (error) {
-    console.error("listAssignableManagers failed:", error);
+    if (!isExpectedTransientDbError(error)) {
+      console.error("listAssignableManagers failed:", error);
+    }
+
     return [];
   }
 }

@@ -4,7 +4,11 @@ import type {
   DashboardListItem,
   DashboardMetric
 } from "@/lib/db/types";
-import { dbQuery } from "@/lib/db/server";
+import {
+  dbQuery,
+  isDbUnavailableFast,
+  isExpectedTransientDbError
+} from "@/lib/db/server";
 import { deriveGoalRating } from "@/lib/workflows/goal-helpers";
 
 type MetricRow = {
@@ -20,6 +24,45 @@ function emptyDetail(primaryTitle: string, secondaryTitle: string): DashboardDet
     secondaryDescription: "No records are available yet.",
     secondaryItems: []
   };
+}
+
+function buildSummaryFallback(session: AppSession): DashboardMetric[] {
+  if (session.role === "employee") {
+    return [
+      { label: "Personal goals", value: "0" },
+      { label: "Goal completion", value: "0%", tone: "accent" },
+      { label: "Next checkpoint", value: "Unavailable" },
+      { label: "Self-feedback items", value: "0", tone: "warn" }
+    ];
+  }
+
+  if (session.role === "manager") {
+    return [
+      { label: "Team goals", value: "0" },
+      { label: "Team ratings", value: "0%", tone: "accent" },
+      { label: "Pending approvals", value: "0", tone: "warn", href: "/goals/approvals" },
+      { label: "Pending discussions", value: "0 upcoming" }
+    ];
+  }
+
+  return [
+    { label: "Open flags", value: "0", tone: "warn", detail: "0 aging flags" },
+    { label: "Compliance", value: "0%", tone: "accent" },
+    { label: "Pending approvals", value: "0", href: "/goals/approvals" },
+    { label: "Active cycles", value: "0" }
+  ];
+}
+
+function buildDetailFallback(session: AppSession): DashboardDetail {
+  if (session.role === "employee") {
+    return emptyDetail("Personal goals", "Feedback history and self-feedback");
+  }
+
+  if (session.role === "manager") {
+    return emptyDetail("Team goals", "Ratings and pending approvals");
+  }
+
+  return emptyDetail("Org-level overview", "Flagged responses and compliance");
 }
 
 async function getAdminCatchUp(
@@ -134,6 +177,10 @@ async function getAdminCatchUp(
 export async function getDashboardSummary(
   session: AppSession
 ): Promise<DashboardMetric[]> {
+  if (isDbUnavailableFast()) {
+    return buildSummaryFallback(session);
+  }
+
   try {
     if (session.role === "employee") {
       const [goalCount, completion, probation, openFeedback] = await Promise.all([
@@ -355,38 +402,21 @@ export async function getDashboardSummary(
       }
     ];
   } catch (error) {
-    console.error("getDashboardSummary failed:", error);
-
-    if (session.role === "employee") {
-      return [
-        { label: "Personal goals", value: "0" },
-        { label: "Goal completion", value: "0%", tone: "accent" },
-        { label: "Next checkpoint", value: "Unavailable" },
-        { label: "Self-feedback items", value: "0", tone: "warn" }
-      ];
+    if (!isExpectedTransientDbError(error)) {
+      console.error("getDashboardSummary failed:", error);
     }
 
-    if (session.role === "manager") {
-      return [
-        { label: "Team goals", value: "0" },
-        { label: "Team ratings", value: "0%", tone: "accent" },
-        { label: "Pending approvals", value: "0", tone: "warn", href: "/goals/approvals" },
-        { label: "Pending discussions", value: "0 upcoming" }
-      ];
-    }
-
-    return [
-      { label: "Open flags", value: "0", tone: "warn", detail: "0 aging flags" },
-      { label: "Compliance", value: "0%", tone: "accent" },
-      { label: "Pending approvals", value: "0", href: "/goals/approvals" },
-      { label: "Active cycles", value: "0" }
-    ];
+    return buildSummaryFallback(session);
   }
 }
 
 export async function getDashboardDetail(
   session: AppSession
 ): Promise<DashboardDetail> {
+  if (isDbUnavailableFast()) {
+    return buildDetailFallback(session);
+  }
+
   try {
     if (session.role === "employee") {
       const [goals, feedbackHistory, selfFeedback] = await Promise.all([
@@ -730,16 +760,10 @@ export async function getDashboardDetail(
       adminCatchUp
     };
   } catch (error) {
-    console.error("getDashboardDetail failed:", error);
-
-    if (session.role === "employee") {
-      return emptyDetail("Personal goals", "Feedback history and self-feedback");
+    if (!isExpectedTransientDbError(error)) {
+      console.error("getDashboardDetail failed:", error);
     }
 
-    if (session.role === "manager") {
-      return emptyDetail("Team goals", "Ratings and pending approvals");
-    }
-
-    return emptyDetail("Org-level overview", "Flagged responses and compliance");
+    return buildDetailFallback(session);
   }
 }

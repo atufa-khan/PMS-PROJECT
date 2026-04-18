@@ -1,6 +1,10 @@
 import type { AppSession } from "@/lib/auth/session";
 import { countWorkingDaysBetween } from "@/lib/dates/working-days";
-import { dbQuery } from "@/lib/db/server";
+import {
+  dbQuery,
+  isDbUnavailableFast,
+  isExpectedTransientDbError
+} from "@/lib/db/server";
 import type {
   ApprovalRecord,
   GoalOwnerOptionRecord,
@@ -177,6 +181,10 @@ function buildSuggestionState(row: Pick<GoalRow, "latest_suggestion_at" | "lates
 }
 
 export async function listGoals(session: AppSession): Promise<GoalRecord[]> {
+  if (isDbUnavailableFast()) {
+    return [];
+  }
+
   try {
     const result = await dbQuery<GoalRow>(
       `
@@ -305,7 +313,10 @@ export async function listGoals(session: AppSession): Promise<GoalRecord[]> {
       };
     });
   } catch (error) {
-    console.error("listGoals failed:", error);
+    if (!isExpectedTransientDbError(error)) {
+      console.error("listGoals failed:", error);
+    }
+
     return [];
   }
 }
@@ -319,6 +330,14 @@ export async function listGoalWeightageContexts(
     excludeGoalId?: string | null;
   } = {}
 ): Promise<GoalWeightageContextRecord[]> {
+  if (isDbUnavailableFast()) {
+    return [
+      { scope: "individual", assignedTotal: 0, remaining: 100 },
+      { scope: "team", assignedTotal: 0, remaining: 100 },
+      { scope: "company", assignedTotal: 0, remaining: 100 }
+    ];
+  }
+
   try {
     const profileResult = await dbQuery<{ team_id: string | null }>(
       `
@@ -378,7 +397,10 @@ export async function listGoalWeightageContexts(
       };
     });
   } catch (error) {
-    console.error("listGoalWeightageContexts failed:", error);
+    if (!isExpectedTransientDbError(error)) {
+      console.error("listGoalWeightageContexts failed:", error);
+    }
+
     return [
       { scope: "individual", assignedTotal: 0, remaining: 100 },
       { scope: "team", assignedTotal: 0, remaining: 100 },
@@ -390,6 +412,10 @@ export async function listGoalWeightageContexts(
 export async function listAssignableGoalOwners(
   session: AppSession
 ): Promise<GoalOwnerOptionRecord[]> {
+  if (isDbUnavailableFast()) {
+    return [];
+  }
+
   try {
     if (session.role === "employee") {
       const selfResult = await dbQuery<{
@@ -465,7 +491,10 @@ export async function listAssignableGoalOwners(
       teamName: row.team_name
     }));
   } catch (error) {
-    console.error("listAssignableGoalOwners failed:", error);
+    if (!isExpectedTransientDbError(error)) {
+      console.error("listAssignableGoalOwners failed:", error);
+    }
+
     return [];
   }
 }
@@ -489,6 +518,10 @@ export async function getGoalForEditing(
   weightageContexts: GoalWeightageContextRecord[];
   assignableOwners: GoalOwnerOptionRecord[];
 } | null> {
+  if (isDbUnavailableFast()) {
+    return null;
+  }
+
   try {
     const result = await dbQuery<
       Pick<
@@ -610,7 +643,10 @@ export async function getGoalForEditing(
       assignableOwners: await listAssignableGoalOwners(session)
     };
   } catch (error) {
-    console.error("getGoalForEditing failed:", error);
+    if (!isExpectedTransientDbError(error)) {
+      console.error("getGoalForEditing failed:", error);
+    }
+
     return null;
   }
 }
@@ -618,6 +654,10 @@ export async function getGoalForEditing(
 export async function listPendingApprovals(
   session: AppSession
 ): Promise<ApprovalRecord[]> {
+  if (isDbUnavailableFast()) {
+    return [];
+  }
+
   try {
     const result = await dbQuery<ApprovalRow>(
       `
@@ -679,7 +719,10 @@ export async function listPendingApprovals(
       };
     });
   } catch (error) {
-    console.error("listPendingApprovals failed:", error);
+    if (!isExpectedTransientDbError(error)) {
+      console.error("listPendingApprovals failed:", error);
+    }
+
     return [];
   }
 }
